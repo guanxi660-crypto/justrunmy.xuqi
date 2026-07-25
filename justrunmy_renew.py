@@ -427,17 +427,27 @@ def login(sb) -> bool:
             return False
     else:
         print("ℹ️ 未检测到 Turnstile")
-    print("🖱️ 敲击回车提交表单...")
-    sb.press_keys('input[name="Password"]', '\n')
-    print("⏳ 等待登录跳转...")
-    for _ in range(12):
-        time.sleep(1)
-        if sb.get_current_url().split('?')[0].lower() != LOGIN_URL.lower():
-            break
-    if sb.get_current_url().split('?')[0].lower() != LOGIN_URL.lower():
-        print("✅ 登录成功！")
+    print("🖱️ 提交登录表单...")
+    try:
+        sb.click('button[type="submit"]')
+    except Exception:
+        sb.press_keys('input[name="Password"]', '\n')
+
+    print("⏳ 等待登录完成并验证会话...")
+    time.sleep(5)
+
+    # 不能仅凭 URL 变化判断登录成功。登录失败页面也可能改变查询参数或尾部斜杠。
+    # 直接访问控制面板并检查登录表单是否再次出现，以确认认证 Cookie 真正生效。
+    sb.open("https://justrunmy.app/panel")
+    time.sleep(5)
+
+    current_url = sb.get_current_url()
+    login_form_visible = sb.is_element_present('input[name="Email"]')
+    if "/id/Account/Login" not in current_url and not login_form_visible:
+        print("✅ 登录成功，会话验证通过！")
         return True
-    print("❌ 登录失败，页面没有跳转。")
+
+    print(f"❌ 登录失败或登录会话未生效，当前页面: {current_url}")
     sb.save_screenshot("login_failed.png")
     return False
 

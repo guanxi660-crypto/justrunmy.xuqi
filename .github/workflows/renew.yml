@@ -71,13 +71,6 @@ jobs:
             echo "⚠️ 未找到任何 SSH 主机配置，当前处于 Actions 机房裸奔直连模式。"
           fi
 
-      # 步骤 6: 随机延迟 0-10 分钟
-      - name: ⏳ 随机延迟
-        run: |
-          DELAY=$(( RANDOM % 601 ))
-          echo "💤 随机延迟 ${DELAY} 秒（最多 10 分钟）"
-          sleep $DELAY
-
       # 步骤 7: 执行脚本 (注入全新 SSH 安全中转环境变量)
       - name: 🚀 运行续期脚本
         env:

@@ -23,14 +23,10 @@ EMAIL        = os.environ.get("JUSTRUNMY_EMAIL")
 PASSWORD     = os.environ.get("JUSTRUNMY_PASSWORD")
 TG_BOT_TOKEN = os.environ.get("TG_BOT_TOKEN")
 TG_CHAT_ID   = os.environ.get("TG_CHAT_ID")
-
-# SSH 代理直连配置
 SSH_HOST     = os.environ.get("SSH_HOST", "")
 SSH_PORT     = int(os.environ.get("SSH_PORT", "22"))
 SSH_USER     = os.environ.get("SSH_USER", "")
 SSH_PASS     = os.environ.get("SSH_PASS", "")
-
-# SOCKS5 代理端口（默认 51080）
 SOCKS_PORT = int(os.environ.get("SOCKS_PORT", "51080"))
 
 if not EMAIL or not PASSWORD:
@@ -38,10 +34,7 @@ if not EMAIL or not PASSWORD:
     print("💡 请检查 GitHub Repository Secrets 是否配置正确。")
     sys.exit(1)
 
-# 全局变量，用于动态保存网页上抓取到的应用名称
 DYNAMIC_APP_NAME = "未知应用"
-
-# 全局变量，用于保存落地 IP 信息（在 main 中赋值）
 CURRENT_IP_INFO = "未知 IP"
 
 # ============================================================
@@ -59,31 +52,20 @@ class SshProxy:
         if not self.host or not self.user:
             print("⚠️ 未提供完整的 SSH 配置")
             return False
-
-        print(f"📡 正在建立 SSH 动态直连隧道 (SOCKS5 代理代理映射)...")
+        print("📡 正在建立 SSH 动态直连隧道 (SOCKS5 代理代理映射)...")
         print(f"🔗 目标节点: {self.user}@{self.host}:{self.port}")
-
-        # 使用 sshpass 配合 ssh -N -D 命令在后台静默建立隧道
         cmd = [
-            "sshpass", "-p", self.password,
-            "ssh",
+            "sshpass", "-p", self.password, "ssh",
             "-o", "StrictHostKeyChecking=no",
             "-o", "UserKnownHostsFile=/dev/null",
             "-o", "ConnectTimeout=15",
             "-N", "-D", f"127.0.0.1:{SOCKS_PORT}",
-            "-p", str(self.port),
-            f"{self.user}@{self.host}"
+            "-p", str(self.port), f"{self.user}@{self.host}"
         ]
-
         self.proc = subprocess.Popen(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            start_new_session=True,
-            text=True
+            cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            start_new_session=True, text=True
         )
-
-        # 循环检测本地转发端口是否成功开放就绪
         for _ in range(30):
             time.sleep(1)
             with socket.socket() as s:
@@ -99,7 +81,6 @@ class SshProxy:
             except Exception:
                 pass
             return False
-
         time.sleep(2)
         return True
 
@@ -152,8 +133,7 @@ def check_ip(proxy: Optional[str] = None) -> str:
             proxies = {"http": proxy, "https": proxy}
         r = requests.get(
             "http://ip-api.com/json/?fields=status,query,countryCode",
-            proxies=proxies,
-            timeout=30
+            proxies=proxies, timeout=30
         ).json()
         if r.get("status") == "success":
             ip_str = f"{mask_ip(r['query'])} ({r['countryCode']})"
@@ -169,10 +149,8 @@ def start_proxy_with_retry(max_retries=3):
     """启动代理，失败时重试"""
     proxy_manager = get_proxy_manager()
     proxy_url = None
-
     if not proxy_manager:
         return None, None
-
     for attempt in range(1, max_retries + 1):
         print(f"🔄 尝试启动 SSH 动态隧道 ({attempt}/{max_retries})...")
         if proxy_manager.start():
@@ -181,13 +159,11 @@ def start_proxy_with_retry(max_retries=3):
             return proxy_manager, proxy_url
         else:
             if attempt < max_retries:
-                print(f"⏳ 等待 5 秒后重试...")
+                print("⏳ 等待 5 秒后重试...")
                 time.sleep(5)
             else:
                 print("⚠️ SSH 隧道多次启动失败，继续使用默认环境直连模式。")
-
     return None, None
-
 
 # ============================================================
 #  Telegram 推送模块
@@ -196,13 +172,10 @@ def send_tg_message(status_icon, status_text, time_left):
     if not TG_BOT_TOKEN or not TG_CHAT_ID:
         print("ℹ️ 未配置 TG_BOT_TOKEN 或 TG_CHAT_ID，跳过 Telegram 推送。")
         return
-
     local_time = time.gmtime(time.time() + 8 * 3600)
     current_time_str = time.strftime("%Y-%m-%d %H:%M:%S", local_time)
-
     masked = mask_email(EMAIL)
     account_line = f"<a href='tg://user?id={TG_CHAT_ID}'>{masked}</a>"
-
     text = (
         f"🎮 justrunmy.app 续期报告\n🖥 {DYNAMIC_APP_NAME}\n"
         f"👤 账号: {account_line}\n"
@@ -211,14 +184,8 @@ def send_tg_message(status_icon, status_text, time_left):
         f"{status_icon} {status_text}\n"
         f"⏱️ 剩余: {time_left}"
     )
-
     url = f"https://api.telegram.org/bot{TG_BOT_TOKEN}/sendMessage"
-    payload = {
-        "chat_id": TG_CHAT_ID,
-        "text": text,
-        "parse_mode": "HTML"
-    }
-    
+    payload = {"chat_id": TG_CHAT_ID, "text": text, "parse_mode": "HTML"}
     try:
         r = requests.post(url, json=payload, timeout=10)
         if r.status_code == 200:
@@ -296,12 +263,7 @@ _COORDS_JS = """
 
 _WININFO_JS = """
 (function(){
-    return {
-        sx: window.screenX || 0,
-        sy: window.screenY || 0,
-        oh: window.outerHeight,
-        ih: window.innerHeight
-    };
+    return {sx: window.screenX || 0, sy: window.screenY || 0, oh: window.outerHeight, ih: window.innerHeight};
 })()
 """
 
@@ -315,15 +277,13 @@ def js_fill_input(sb, selector: str, text: str):
         var el = document.querySelector('{selector}');
         if (!el) return;
         var nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
-        if (nativeInputValueSetter) {{
-            nativeInputValueSetter.call(el, "{safe_text}");
-        }} else {{
-            el.value = "{safe_text}";
-        }}
+        if (nativeInputValueSetter) {{ nativeInputValueSetter.call(el, "{safe_text}"); }}
+        else {{ el.value = "{safe_text}"; }}
         el.dispatchEvent(new Event('input', {{ bubbles: true }}));
         el.dispatchEvent(new Event('change', {{ bubbles: true }}));
     }})()
     """)
+
 
 def _activate_window():
     for cls in ["chrome", "chromium", "Chromium", "Chrome", "google-chrome"]:
@@ -341,50 +301,36 @@ def _activate_window():
     except Exception:
         pass
 
+
 def _xdotool_click(x: int, y: int, penetration_mode: bool = False):
-    """
-    底层模拟点击内核
-    penetration_mode 为 True 时激活底层击穿模式：模拟人类非线性滑动鼠标轨迹 + 物理长按延时松开
-    """
     _activate_window()
     import random
-    
     if penetration_mode:
-        print(f"  ⚡ [底层击穿模式激活] 正在为您模拟人类鼠标变速平滑轨迹滑动...")
+        print("  ⚡ [底层击穿模式激活] 正在为您模拟人类鼠标变速平滑轨迹滑动...")
         try:
-            # 读取当前鼠标位置
             res = subprocess.run(["xdotool", "getmouselocation", "--shell"], capture_output=True, text=True, timeout=2)
             lines = res.stdout.strip().split("\n")
             curr_x = int(lines[0].split("=")[1])
             curr_y = int(lines[1].split("=")[1])
         except Exception:
             curr_x, curr_y = 0, 0
-
-        # 为目标坐标引入人类操作产生的微幅像素物理随机抖动
         target_x = x + random.randint(-4, 4)
         target_y = y + random.randint(-4, 4)
-
-        # 步进式非线性拟合滑动
         steps = random.randint(15, 25)
         for i in range(1, steps + 1):
             t = i / steps
-            t = t * t * (3 - 2 * t)  # 人类特征：渐入渐出变速曲线优化
+            t = t * t * (3 - 2 * t)
             next_x = int(curr_x + (target_x - curr_x) * t + random.randint(-1, 1))
             next_y = int(curr_y + (target_y - curr_y) * t + random.randint(-1, 1))
             subprocess.run(["xdotool", "mousemove", str(next_x), str(next_y)], stderr=subprocess.DEVNULL)
             time.sleep(random.uniform(0.01, 0.02))
-
-        # 终点校正与停顿
         subprocess.run(["xdotool", "mousemove", str(target_x), str(target_y)], stderr=subprocess.DEVNULL)
         time.sleep(random.uniform(0.12, 0.25))
-
-        # 拟真长按点击（按下 -> 产生真实接触时长 -> 弹起）
         subprocess.run(["xdotool", "mousedown", "1"], stderr=subprocess.DEVNULL)
         time.sleep(random.uniform(0.07, 0.16))
         subprocess.run(["xdotool", "mouseup", "1"], stderr=subprocess.DEVNULL)
         print(f"  🎯 击穿点击执行完毕，随机模拟坐标落点: ({target_x}, {target_y})")
     else:
-        # 常规轻度伪装点击：直接位移但附带随机边缘像素点
         rx = x + random.randint(-2, 2)
         ry = y + random.randint(-2, 2)
         print(f"  🖱️ 物理级常规点击 Turnstile 坐标: ({rx}, {ry})")
@@ -411,27 +357,23 @@ def _click_turnstile(sb, penetration_mode: bool = False):
         wi = sb.execute_script(_WININFO_JS)
     except Exception:
         wi = {"sx": 0, "sy": 0, "oh": 800, "ih": 768}
-        
     bar = wi["oh"] - wi["ih"]
-    ax  = coords["cx"] + wi["sx"]
-    ay  = coords["cy"] + wi["sy"] + bar
-    
+    ax = coords["cx"] + wi["sx"]
+    ay = coords["cy"] + wi["sy"] + bar
     _xdotool_click(ax, ay, penetration_mode=penetration_mode)
+
 
 def handle_turnstile(sb) -> bool:
     print("🔍 处理 Cloudflare Turnstile 验证...")
     import random
     time.sleep(2)
-    
     if sb.execute_script(_SOLVED_JS):
         print("  ✅ 已静默通过")
         return True
-
     for _ in range(3):
         try: sb.execute_script(_EXPAND_JS)
         except Exception: pass
         time.sleep(0.5)
-
     for attempt in range(6):
         if sb.execute_script(_SOLVED_JS):
             print(f"  ✅ Turnstile 通过（第 {attempt + 1} 次尝试）")
@@ -439,19 +381,14 @@ def handle_turnstile(sb) -> bool:
         try: sb.execute_script(_EXPAND_JS)
         except Exception: pass
         time.sleep(0.3)
-        
-        # 👑 击穿逻辑切换：前 2 次点击不成功时，从第 3 次开始自动全面激活“底层击穿模式”
         penetration_mode = (attempt >= 2)
         _click_turnstile(sb, penetration_mode=penetration_mode)
-        
-        # 散列轮询等待，随机化间歇，防频率审查
         for _ in range(8):
             time.sleep(random.uniform(0.4, 0.6))
             if sb.execute_script(_SOLVED_JS):
                 print(f"  ✅ Turnstile 通过（第 {attempt + 1} 次尝试）")
                 return True
         print(f"  ⚠️ 第 {attempt + 1} 次未通过，重试...")
-
     print("  ❌ Turnstile 6 次均失败")
     return False
 
@@ -462,14 +399,12 @@ def login(sb) -> bool:
     print(f"🌐 打开登录页面: {LOGIN_URL}")
     sb.uc_open_with_reconnect(LOGIN_URL, reconnect_time=5)
     time.sleep(4)
-
     try:
         sb.wait_for_element('input[name="Email"]', timeout=15)
     except Exception:
         print("❌ 页面未加载出登录表单")
         sb.save_screenshot("login_load_fail.png")
         return False
-
     print("🍪 关闭可能的 Cookie 弹窗...")
     try:
         for btn in sb.find_elements("button"):
@@ -479,15 +414,12 @@ def login(sb) -> bool:
                 break
     except Exception:
         pass
-
-    print(f"📧 填写邮箱...")
+    print("📧 填写邮箱...")
     js_fill_input(sb, 'input[name="Email"]', EMAIL)
     time.sleep(0.3)
-    
     print("🔑 填写密码...")
     js_fill_input(sb, 'input[name="Password"]', PASSWORD)
     time.sleep(1)
-
     if sb.execute_script(_EXISTS_JS):
         if not handle_turnstile(sb):
             print("❌ 登录界面的 Turnstile 验证失败")
@@ -495,20 +427,16 @@ def login(sb) -> bool:
             return False
     else:
         print("ℹ️ 未检测到 Turnstile")
-
     print("🖱️ 敲击回车提交表单...")
     sb.press_keys('input[name="Password"]', '\n')
-
     print("⏳ 等待登录跳转...")
     for _ in range(12):
         time.sleep(1)
         if sb.get_current_url().split('?')[0].lower() != LOGIN_URL.lower():
             break
-
     if sb.get_current_url().split('?')[0].lower() != LOGIN_URL.lower():
         print("✅ 登录成功！")
         return True
-        
     print("❌ 登录失败，页面没有跳转。")
     sb.save_screenshot("login_failed.png")
     return False
@@ -518,29 +446,17 @@ def login(sb) -> bool:
 # ============================================================
 def renew(sb) -> bool:
     global DYNAMIC_APP_NAME
-    
+
     print("\n" + "="*50)
     print("   🚀 开始自动续期流程")
     print("="*50)
-    
-    print("🌐 进入控制面板: https://justrunmy.app/panel")
-    sb.open("https://justrunmy.app/panel")
-    time.sleep(3)
 
-    print("🖱️ 自动读取应用名称...")
-    try:
-        sb.wait_for_element('h3.font-semibold', timeout=10)
-        DYNAMIC_APP_NAME = sb.get_text('h3.font-semibold')
-        print(f"🎯 成功抓取到应用名称: {DYNAMIC_APP_NAME}")
-        
-        sb.click('h3.font-semibold')
-        time.sleep(3)
-        print(f"📍 成功进入应用详情页: {sb.get_current_url()}")
-    except Exception as e:
-        print(f"❌ 找不到应用卡片: {e}")
-        sb.save_screenshot("renew_app_not_found.png")
-        send_tg_message("❌", "续期失败(找不到应用)", "未知")
-        return False
+    DYNAMIC_APP_NAME = "bot"
+    print("🌐 直接进入指定应用详情页: https://justrunmy.app/panel/application/39529/")
+    sb.open("https://justrunmy.app/panel/application/39529/")
+    time.sleep(5)
+    print(f"🎯 当前应用名称: {DYNAMIC_APP_NAME}")
+    print(f"📍 当前应用详情页: {sb.get_current_url()}")
 
     print("🖱️ 点击 Reset Timer 按钮...")
     try:
@@ -566,7 +482,7 @@ def renew(sb) -> bool:
     try:
         sb.click('button:contains("Just Reset")')
         print("⏳ 提交续期请求，等待服务器处理...")
-        time.sleep(5) 
+        time.sleep(5)
     except Exception as e:
         print(f"❌ 找不到 Just Reset 按钮: {e}")
         sb.save_screenshot("renew_just_reset_not_found.png")
@@ -579,7 +495,6 @@ def renew(sb) -> bool:
         time.sleep(4)
         timer_text = sb.get_text('span.font-mono.text-xl')
         print(f"⏱️ 当前应用剩余时间: {timer_text}")
-        
         if "2 days 23" in timer_text or "3 days" in timer_text:
             print("✅ 完美！续期任务圆满完成！")
             sb.save_screenshot("renew_success.png")
@@ -589,7 +504,7 @@ def renew(sb) -> bool:
             print("⚠️ 倒计时似乎没有重置到最高值，请人工检查截图确认。")
             sb.save_screenshot("renew_warning.png")
             send_tg_message("⚠️", "续期异常(请检查)", timer_text)
-            return True 
+            return True
     except Exception as e:
         print(f"⚠️ 读取倒计时失败，但流程已执行完毕: {e}")
         sb.save_screenshot("renew_timer_read_fail.png")
@@ -603,26 +518,18 @@ def main():
     print("=" * 50)
     print("   JustRunMy.app 自动登录与续期脚本 (SSH 动态直连升级版)")
     print("=" * 50)
-
-    # 启动后台 SSH 隧道代理（带重试），若未配置则直连
     proxy_manager, proxy_url = start_proxy_with_retry(max_retries=5)
-
-    # 检查落地 IP 信息
     print(f"🔍 正在检查 IP 信息（使用代理: {bool(proxy_url)})...")
     ip_info = check_ip(proxy_url)
     print(f"🌐 IP 信息：{ip_info}")
-
     global CURRENT_IP_INFO
     CURRENT_IP_INFO = ip_info
-
     sb_kwargs = {"uc": True, "test": True, "headless": False}
-
     if proxy_url:
         print(f"🔗 挂载隧道代理至浏览器后端: {proxy_url}")
         sb_kwargs["proxy"] = proxy_url
     else:
         print("🌐 未配置安全隧道，正在使用默认 Actions 裸奔直连访问")
-
     try:
         with SB(**sb_kwargs) as sb:
             print("✅ 自动化安全浏览器已成功拉起")
@@ -631,7 +538,6 @@ def main():
                 print(f"🌐 浏览器端实测出口真实 IP: {sb.get_text('body')}")
             except Exception:
                 pass
-
             if login(sb):
                 renew(sb)
             else:

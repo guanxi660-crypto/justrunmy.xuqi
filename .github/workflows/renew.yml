@@ -7,7 +7,7 @@ on:
   
   # 定时触发 (每天凌晨1点)
   schedule:
-    - cron: '5 3 */2 * *'
+    - cron: '5 3 */1 * *'
 
 # 权限配置
 permissions:

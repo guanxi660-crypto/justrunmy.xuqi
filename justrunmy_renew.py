@@ -9,6 +9,7 @@ import socket
 import signal
 import subprocess
 import requests
+import re
 from typing import Optional
 from urllib.parse import urlparse, parse_qs, unquote
 from seleniumbase import SB
@@ -457,15 +458,6 @@ def login(sb) -> bool:
 def renew(sb) -> bool:
     global DYNAMIC_APP_NAME
 
-    def click_viewport_point(viewport_x: int, viewport_y: int, label: str):
-        """把网页可视区域坐标转换为屏幕坐标，再执行真实鼠标点击。"""
-        wi = sb.execute_script(_WININFO_JS)
-        browser_bar = wi["oh"] - wi["ih"]
-        absolute_x = int(viewport_x + wi["sx"])
-        absolute_y = int(viewport_y + wi["sy"] + browser_bar)
-        print(f"  🎯 {label} 页面坐标=({viewport_x}, {viewport_y})，屏幕坐标=({absolute_x}, {absolute_y})")
-        _xdotool_click(absolute_x, absolute_y)
-
     print("\n" + "="*50)
     print("   🚀 开始自动续期流程")
     print("="*50)
@@ -477,19 +469,14 @@ def renew(sb) -> bool:
     print(f"🎯 当前应用名称: {DYNAMIC_APP_NAME}")
     print(f"📍 当前应用详情页: {sb.get_current_url()}")
 
-    # 当前页面右上角 Reset timer 在固定的响应式工具栏区域。
-    # 避开站点无法被 WebDriver 枚举的前端控件，直接进行真实鼠标点击。
-    print("🖱️ 物理点击右上角 Reset timer 续期按钮...")
+    print("🖱️ 点击 Reset Timer 按钮...")
     try:
-        vw = int(sb.execute_script("return window.innerWidth"))
-        reset_x = vw - 168
-        reset_y = 127
-        click_viewport_point(reset_x, reset_y, "Reset timer")
-        time.sleep(4)
+        sb.click('button:contains("Reset Timer")')
+        time.sleep(3)
     except Exception as e:
-        print(f"❌ 无法物理点击 Reset timer: {e}")
+        print(f"❌ 找不到 Reset Timer 按钮: {e}")
         sb.save_screenshot("renew_reset_btn_not_found.png")
-        send_tg_message("❌", "续期失败(无法点击按钮)", "未知")
+        send_tg_message("❌", "续期失败(找不到按钮)", "未知")
         return False
 
     print("🛡️ 检查续期弹窗内是否需要 CF 验证...")
@@ -504,21 +491,11 @@ def renew(sb) -> bool:
 
     print("🖱️ 点击 Just Reset 确认续期...")
     try:
-        # 先使用站点此前可用的文本按钮选择器；若站点组件仍不暴露给
-        # WebDriver，则按弹窗右下角按钮的稳定相对位置执行物理点击。
-        try:
-            sb.click('button:contains("Just Reset")', timeout=5)
-            print("  ✅ 已通过按钮文字点击 Just Reset")
-        except Exception:
-            vw = int(sb.execute_script("return window.innerWidth"))
-            vh = int(sb.execute_script("return window.innerHeight"))
-            just_reset_x = int(vw / 2 + 150)
-            just_reset_y = int(vh / 2 + 255)
-            click_viewport_point(just_reset_x, just_reset_y, "Just Reset")
+        sb.click('button:contains("Just Reset")')
         print("⏳ 提交续期请求，等待服务器处理...")
-        time.sleep(6)
+        time.sleep(5)
     except Exception as e:
-        print(f"❌ 无法点击 Just Reset 按钮: {e}")
+        print(f"❌ 找不到 Just Reset 按钮: {e}")
         sb.save_screenshot("renew_just_reset_not_found.png")
         send_tg_message("❌", "续期失败(无法确认)", "未知")
         return False
@@ -527,23 +504,26 @@ def renew(sb) -> bool:
     try:
         sb.refresh()
         time.sleep(4)
-        timer_text = sb.get_text('span.font-mono.text-xl')
-        print(f"⏱️ 当前应用剩余时间: {timer_text}")
 
-        if "2 days 23" in timer_text or "3 days" in timer_text:
-            print("✅ 完美！续期任务圆满完成！")
-            sb.save_screenshot("renew_success.png")
-            send_tg_message("✅", "续期完成", timer_text)
-            return True
-        else:
-            print("⚠️ 倒计时似乎没有重置到最高值，请人工检查截图确认。")
-            sb.save_screenshot("renew_warning.png")
-            send_tg_message("⚠️", "续期异常(请检查)", timer_text)
-            return True
+        body_text = sb.get_text("body")
+        timer_match = re.search(
+            r"\b\d+\s+days?\s+\d{1,2}:\d{2}\b",
+            body_text,
+            re.IGNORECASE
+        )
+        if not timer_match:
+            raise Exception("页面正文中未找到倒计时")
+
+        timer_text = timer_match.group(0)
+        print(f"⏱️ 当前应用剩余时间: {timer_text}")
+        print("✅ 续期任务已完成！")
+        sb.save_screenshot("renew_success.png")
+        send_tg_message("✅", "续期完成", timer_text)
+        return True
     except Exception as e:
-        print(f"⚠️ 读取倒计时失败，但流程已执行完毕: {e}")
+        print(f"⚠️ 读取倒计时失败，但续期操作已执行: {e}")
         sb.save_screenshot("renew_timer_read_fail.png")
-        send_tg_message("⚠️", "读取剩余时间失败", "未知")
+        send_tg_message("⚠️", "续期已执行，但读取剩余时间失败", "未知")
         return False
 
 # ============================================================

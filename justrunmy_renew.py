@@ -470,7 +470,15 @@ def renew(sb) -> bool:
 
     print("🖱️ 点击 Reset Timer 按钮...")
     try:
-        sb.click('button:contains("Reset Timer")')
+        reset_timer_xpath = (
+            '//button[contains('
+            'translate(normalize-space(.), '
+            '"ABCDEFGHIJKLMNOPQRSTUVWXYZ", '
+            '"abcdefghijklmnopqrstuvwxyz"), '
+            '"reset timer")]'
+        )
+        sb.wait_for_element_visible(reset_timer_xpath, timeout=20)
+        sb.click(reset_timer_xpath)
         time.sleep(3)
     except Exception as e:
         print(f"❌ 找不到 Reset Timer 按钮: {e}")

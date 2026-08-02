@@ -93,9 +93,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: screenshots-${{ github.run_id }}
-          path: |
-            *.png
-            *.html
+          path: "*.png"
           retention-days: 7
 
       # 步骤 9: 清理本地截图
@@ -119,7 +117,7 @@ jobs:
             TIMESTAMP=$(date +'%Y-%m-%d %H:%M:%S')
             git commit -m "⏱️ 更新执行时间: $TIMESTAMP"
             git fetch origin main
-            git push -f origin HEAD:main
+            git push origin HEAD:main
             echo "✅ 更改已推送"
           fi
 

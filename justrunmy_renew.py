@@ -467,13 +467,60 @@ def renew(sb) -> bool:
     time.sleep(5)
     print(f"🎯 当前应用名称: {DYNAMIC_APP_NAME}")
     print(f"📍 当前应用详情页: {sb.get_current_url()}")
-
-    print("🖱️ 点击 Reset Timer 按钮...")
     try:
-        sb.click('button:contains("Reset Timer")')
+        with open("application_page.html", "w", encoding="utf-8") as f:
+            f.write(sb.get_page_source())
+    except Exception:
+        pass
+
+    print("🖱️ 点击 Reset timer 续期按钮...")
+    try:
+        # 当前站点的可见按钮没有被 Selenium 的文本 XPath 正常识别。
+        # 使用页面可视区域坐标定位右上角橙色续期按钮，并通过浏览器事件点击。
+        reset_click_result = sb.execute_script(r"""
+            return (function () {
+                var x = Math.round(window.innerWidth * 0.865);
+                var y = 128;
+                var el = document.elementFromPoint(x, y);
+                if (!el) return {ok: false, reason: 'elementFromPoint-null', x: x, y: y};
+
+                var target = el.closest('button, a, [role="button"]') || el;
+                var text = ((target.innerText || target.textContent || target.value || '')
+                    .replace(/\s+/g, ' ').trim());
+                var rect = target.getBoundingClientRect();
+
+                target.scrollIntoView({block: 'center', inline: 'center'});
+                target.focus();
+                ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click'].forEach(function (type) {
+                    target.dispatchEvent(new MouseEvent(type, {
+                        bubbles: true,
+                        cancelable: true,
+                        view: window,
+                        clientX: rect.left + rect.width / 2,
+                        clientY: rect.top + rect.height / 2,
+                        button: 0,
+                        buttons: type.indexOf('down') >= 0 ? 1 : 0
+                    }));
+                });
+
+                return {
+                    ok: true,
+                    method: 'viewport-coordinate',
+                    tag: target.tagName,
+                    text: text,
+                    x: Math.round(rect.left + rect.width / 2),
+                    y: Math.round(rect.top + rect.height / 2)
+                };
+            })();
+        """)
+
+        if not reset_click_result or not reset_click_result.get("ok"):
+            raise Exception(f"坐标点击失败: {reset_click_result}")
+
+        print(f"✅ 已执行续期按钮点击: {reset_click_result}")
         time.sleep(3)
     except Exception as e:
-        print(f"❌ 找不到 Reset Timer 按钮: {e}")
+        print(f"❌ 无法点击 Reset timer 续期按钮: {e}")
         sb.save_screenshot("renew_reset_btn_not_found.png")
         send_tg_message("❌", "续期失败(找不到按钮)", "未知")
         return False

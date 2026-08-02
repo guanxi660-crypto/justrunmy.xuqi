@@ -93,7 +93,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: screenshots-${{ github.run_id }}
-          path: "*.png"
+          path: |
+            *.png
+            *.html
           retention-days: 7
 
       # 步骤 9: 清理本地截图

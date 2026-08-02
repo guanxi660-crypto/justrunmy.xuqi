@@ -457,6 +457,83 @@ def login(sb) -> bool:
 def renew(sb) -> bool:
     global DYNAMIC_APP_NAME
 
+    def click_visible_control(control_text: str):
+        """按可见文字定位控件，再用 xdotool 对控件中心执行真实点击。"""
+        expected_json = json.dumps(control_text.lower())
+        sb.execute_script(r"""
+            (function(expected) {
+                document.documentElement.removeAttribute('data-jrm-target');
+
+                function normalizedText(el) {
+                    return ((el.innerText || el.textContent || el.value || '')
+                        .replace(/\s+/g, ' ').trim().toLowerCase());
+                }
+
+                function visible(el) {
+                    var r = el.getBoundingClientRect();
+                    var s = window.getComputedStyle(el);
+                    return r.width > 0 && r.height > 0 &&
+                           s.display !== 'none' && s.visibility !== 'hidden' &&
+                           s.opacity !== '0';
+                }
+
+                function addRoots(root, roots) {
+                    roots.push(root);
+                    root.querySelectorAll('*').forEach(function(el) {
+                        if (el.shadowRoot) addRoots(el.shadowRoot, roots);
+                    });
+                }
+
+                var roots = [];
+                addRoots(document, roots);
+                var matches = [];
+
+                roots.forEach(function(root) {
+                    root.querySelectorAll('*').forEach(function(el) {
+                        if (!visible(el) || normalizedText(el) !== expected) return;
+                        var target = el.closest('button, a, [role="button"]') || el;
+                        if (visible(target) && matches.indexOf(target) < 0) matches.push(target);
+                    });
+                });
+
+                if (!matches.length) {
+                    document.documentElement.setAttribute(
+                        'data-jrm-target', JSON.stringify({ok: false, text: expected})
+                    );
+                    return;
+                }
+
+                matches.sort(function(a, b) {
+                    var ar = a.getBoundingClientRect();
+                    var br = b.getBoundingClientRect();
+                    return (ar.width * ar.height) - (br.width * br.height);
+                });
+
+                var target = matches[0];
+                target.scrollIntoView({block: 'center', inline: 'center'});
+                var r = target.getBoundingClientRect();
+                document.documentElement.setAttribute('data-jrm-target', JSON.stringify({
+                    ok: true,
+                    text: expected,
+                    tag: target.tagName,
+                    cx: Math.round(r.left + r.width / 2),
+                    cy: Math.round(r.top + r.height / 2)
+                }));
+            })(EXPECTED_TEXT);
+        """.replace("EXPECTED_TEXT", expected_json))
+
+        raw = sb.get_attribute("html", "data-jrm-target")
+        target = json.loads(raw) if raw else None
+        if not target or not target.get("ok"):
+            raise Exception(f"页面中未找到可见控件: {control_text}; target={target}")
+
+        wi = sb.execute_script(_WININFO_JS)
+        browser_bar = wi["oh"] - wi["ih"]
+        absolute_x = int(target["cx"] + wi["sx"])
+        absolute_y = int(target["cy"] + wi["sy"] + browser_bar)
+        print(f"  🎯 已定位 {control_text}: {target}, 屏幕坐标=({absolute_x}, {absolute_y})")
+        _xdotool_click(absolute_x, absolute_y)
+
     print("\n" + "="*50)
     print("   🚀 开始自动续期流程")
     print("="*50)
@@ -467,60 +544,13 @@ def renew(sb) -> bool:
     time.sleep(5)
     print(f"🎯 当前应用名称: {DYNAMIC_APP_NAME}")
     print(f"📍 当前应用详情页: {sb.get_current_url()}")
-    try:
-        with open("application_page.html", "w", encoding="utf-8") as f:
-            f.write(sb.get_page_source())
-    except Exception:
-        pass
 
     print("🖱️ 点击 Reset timer 续期按钮...")
     try:
-        # 当前站点的可见按钮没有被 Selenium 的文本 XPath 正常识别。
-        # 使用页面可视区域坐标定位右上角橙色续期按钮，并通过浏览器事件点击。
-        reset_click_result = sb.execute_script(r"""
-            return (function () {
-                var x = Math.round(window.innerWidth * 0.865);
-                var y = 128;
-                var el = document.elementFromPoint(x, y);
-                if (!el) return {ok: false, reason: 'elementFromPoint-null', x: x, y: y};
-
-                var target = el.closest('button, a, [role="button"]') || el;
-                var text = ((target.innerText || target.textContent || target.value || '')
-                    .replace(/\s+/g, ' ').trim());
-                var rect = target.getBoundingClientRect();
-
-                target.scrollIntoView({block: 'center', inline: 'center'});
-                target.focus();
-                ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click'].forEach(function (type) {
-                    target.dispatchEvent(new MouseEvent(type, {
-                        bubbles: true,
-                        cancelable: true,
-                        view: window,
-                        clientX: rect.left + rect.width / 2,
-                        clientY: rect.top + rect.height / 2,
-                        button: 0,
-                        buttons: type.indexOf('down') >= 0 ? 1 : 0
-                    }));
-                });
-
-                return {
-                    ok: true,
-                    method: 'viewport-coordinate',
-                    tag: target.tagName,
-                    text: text,
-                    x: Math.round(rect.left + rect.width / 2),
-                    y: Math.round(rect.top + rect.height / 2)
-                };
-            })();
-        """)
-
-        if not reset_click_result or not reset_click_result.get("ok"):
-            raise Exception(f"坐标点击失败: {reset_click_result}")
-
-        print(f"✅ 已执行续期按钮点击: {reset_click_result}")
+        click_visible_control("Reset timer")
         time.sleep(3)
     except Exception as e:
-        print(f"❌ 无法点击 Reset timer 续期按钮: {e}")
+        print(f"❌ 找不到或无法点击 Reset timer 续期按钮: {e}")
         sb.save_screenshot("renew_reset_btn_not_found.png")
         send_tg_message("❌", "续期失败(找不到按钮)", "未知")
         return False
@@ -537,11 +567,11 @@ def renew(sb) -> bool:
 
     print("🖱️ 点击 Just Reset 确认续期...")
     try:
-        sb.click('button:contains("Just Reset")')
+        click_visible_control("Just Reset")
         print("⏳ 提交续期请求，等待服务器处理...")
         time.sleep(5)
     except Exception as e:
-        print(f"❌ 找不到 Just Reset 按钮: {e}")
+        print(f"❌ 找不到或无法点击 Just Reset 按钮: {e}")
         sb.save_screenshot("renew_just_reset_not_found.png")
         send_tg_message("❌", "续期失败(无法确认)", "未知")
         return False
@@ -552,6 +582,7 @@ def renew(sb) -> bool:
         time.sleep(4)
         timer_text = sb.get_text('span.font-mono.text-xl')
         print(f"⏱️ 当前应用剩余时间: {timer_text}")
+
         if "2 days 23" in timer_text or "3 days" in timer_text:
             print("✅ 完美！续期任务圆满完成！")
             sb.save_screenshot("renew_success.png")

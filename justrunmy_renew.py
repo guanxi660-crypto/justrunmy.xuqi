@@ -457,81 +457,13 @@ def login(sb) -> bool:
 def renew(sb) -> bool:
     global DYNAMIC_APP_NAME
 
-    def click_visible_control(control_text: str):
-        """按可见文字定位控件，再用 xdotool 对控件中心执行真实点击。"""
-        expected_json = json.dumps(control_text.lower())
-        sb.execute_script(r"""
-            (function(expected) {
-                document.documentElement.removeAttribute('data-jrm-target');
-
-                function normalizedText(el) {
-                    return ((el.innerText || el.textContent || el.value || '')
-                        .replace(/\s+/g, ' ').trim().toLowerCase());
-                }
-
-                function visible(el) {
-                    var r = el.getBoundingClientRect();
-                    var s = window.getComputedStyle(el);
-                    return r.width > 0 && r.height > 0 &&
-                           s.display !== 'none' && s.visibility !== 'hidden' &&
-                           s.opacity !== '0';
-                }
-
-                function addRoots(root, roots) {
-                    roots.push(root);
-                    root.querySelectorAll('*').forEach(function(el) {
-                        if (el.shadowRoot) addRoots(el.shadowRoot, roots);
-                    });
-                }
-
-                var roots = [];
-                addRoots(document, roots);
-                var matches = [];
-
-                roots.forEach(function(root) {
-                    root.querySelectorAll('*').forEach(function(el) {
-                        if (!visible(el) || normalizedText(el) !== expected) return;
-                        var target = el.closest('button, a, [role="button"]') || el;
-                        if (visible(target) && matches.indexOf(target) < 0) matches.push(target);
-                    });
-                });
-
-                if (!matches.length) {
-                    document.documentElement.setAttribute(
-                        'data-jrm-target', JSON.stringify({ok: false, text: expected})
-                    );
-                    return;
-                }
-
-                matches.sort(function(a, b) {
-                    var ar = a.getBoundingClientRect();
-                    var br = b.getBoundingClientRect();
-                    return (ar.width * ar.height) - (br.width * br.height);
-                });
-
-                var target = matches[0];
-                target.scrollIntoView({block: 'center', inline: 'center'});
-                var r = target.getBoundingClientRect();
-                document.documentElement.setAttribute('data-jrm-target', JSON.stringify({
-                    ok: true,
-                    text: expected,
-                    tag: target.tagName,
-                    cx: Math.round(r.left + r.width / 2),
-                    cy: Math.round(r.top + r.height / 2)
-                }));
-            })(EXPECTED_TEXT);
-        """.replace("EXPECTED_TEXT", expected_json))
-
-        raw = sb.get_attribute("html", "data-jrm-target")
-        target = json.loads(raw) if raw else None
-        if not target or not target.get("ok"):
-            raise Exception(f"页面中未找到可见控件: {control_text}; target={target}")
-
+    def click_viewport_point(viewport_x: int, viewport_y: int, label: str):
+        """把网页可视区域坐标转换为屏幕坐标，再执行真实鼠标点击。"""
         wi = sb.execute_script(_WININFO_JS)
         browser_bar = wi["oh"] - wi["ih"]
-        absolute_x = int(target["cx"] + wi["sx"])
-        absolute_y = int(target["cy"] + wi["sy"] + browser_bar)
-        print(f"  🎯 已定位 {control_text}: {target}, 屏幕坐标=({absolute_x}, {absolute_y})")
+        absolute_x = int(viewport_x + wi["sx"])
+        absolute_y = int(viewport_y + wi["sy"] + browser_bar)
+        print(f"  🎯 {label} 页面坐标=({viewport_x}, {viewport_y})，屏幕坐标=({absolute_x}, {absolute_y})")
         _xdotool_click(absolute_x, absolute_y)
 
     print("\n" + "="*50)
@@ -545,14 +477,19 @@ def renew(sb) -> bool:
     print(f"🎯 当前应用名称: {DYNAMIC_APP_NAME}")
     print(f"📍 当前应用详情页: {sb.get_current_url()}")
 
-    print("🖱️ 点击 Reset timer 续期按钮...")
+    # 当前页面右上角 Reset timer 在固定的响应式工具栏区域。
+    # 避开站点无法被 WebDriver 枚举的前端控件，直接进行真实鼠标点击。
+    print("🖱️ 物理点击右上角 Reset timer 续期按钮...")
     try:
-        click_visible_control("Reset timer")
-        time.sleep(3)
+        vw = int(sb.execute_script("return window.innerWidth"))
+        reset_x = vw - 168
+        reset_y = 127
+        click_viewport_point(reset_x, reset_y, "Reset timer")
+        time.sleep(4)
     except Exception as e:
-        print(f"❌ 找不到或无法点击 Reset timer 续期按钮: {e}")
+        print(f"❌ 无法物理点击 Reset timer: {e}")
         sb.save_screenshot("renew_reset_btn_not_found.png")
-        send_tg_message("❌", "续期失败(找不到按钮)", "未知")
+        send_tg_message("❌", "续期失败(无法点击按钮)", "未知")
         return False
 
     print("🛡️ 检查续期弹窗内是否需要 CF 验证...")
@@ -567,11 +504,21 @@ def renew(sb) -> bool:
 
     print("🖱️ 点击 Just Reset 确认续期...")
     try:
-        click_visible_control("Just Reset")
+        # 先使用站点此前可用的文本按钮选择器；若站点组件仍不暴露给
+        # WebDriver，则按弹窗右下角按钮的稳定相对位置执行物理点击。
+        try:
+            sb.click('button:contains("Just Reset")', timeout=5)
+            print("  ✅ 已通过按钮文字点击 Just Reset")
+        except Exception:
+            vw = int(sb.execute_script("return window.innerWidth"))
+            vh = int(sb.execute_script("return window.innerHeight"))
+            just_reset_x = int(vw / 2 + 150)
+            just_reset_y = int(vh / 2 + 255)
+            click_viewport_point(just_reset_x, just_reset_y, "Just Reset")
         print("⏳ 提交续期请求，等待服务器处理...")
-        time.sleep(5)
+        time.sleep(6)
     except Exception as e:
-        print(f"❌ 找不到或无法点击 Just Reset 按钮: {e}")
+        print(f"❌ 无法点击 Just Reset 按钮: {e}")
         sb.save_screenshot("renew_just_reset_not_found.png")
         send_tg_message("❌", "续期失败(无法确认)", "未知")
         return False

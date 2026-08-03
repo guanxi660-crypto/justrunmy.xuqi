@@ -73,6 +73,62 @@ def save_shot(sb, name):
         print(f"⚠️ 截图保存失败: {exc}")
 
 
+def force_cdp_click_cf(sb):
+    """底层 CDP 坐标物理强行点击"""
+    # 1. 先查 token 是否已经自动好了
+    token = sb.execute_script("let el = document.querySelector('[name=cf-turnstile-response]'); return el ? el.value : '';")
+    if token and len(token) > 20:
+        print("🎉 Cloudflare 自动检测已通过，无需点击！")
+        return True
+
+    print("🎯 启动 CDP 物理坐标定位...")
+    # 2. 计算 iframe 容器在 viewport 中的像素位置
+    rect = sb.execute_script("""
+        let el = document.querySelector("iframe[src*='challenges']") || 
+                 document.querySelector("iframe[title*='Cloudflare']") ||
+                 document.querySelector("iframe[src*='cloudflare']") ||
+                 document.querySelector(".cf-turnstile") ||
+                 document.querySelector("#cf-turnstile") ||
+                 document.querySelector("iframe");
+        if (!el) return null;
+        let r = el.getBoundingClientRect();
+        return {left: r.left, top: r.top, width: r.width, height: r.height};
+    """)
+
+    if not rect:
+        print("⚠️ JS 依然未能锁定控件，启用全屏物理回退点击...")
+        sb.uc_gui_click_captcha()
+    else:
+        # 复选框通常在 Turnstile 框左侧 35 像素，高度居中的位置
+        click_x = int(rect['left'] + 35)
+        click_y = int(rect['top'] + (rect['height'] / 2))
+        print(f"📍 捕获复选框绝对坐标: X={click_x}, Y={click_y}，发送 CDP 鼠标事件...")
+
+        try:
+            # 向 Chrome 内核直接发送鼠标按压与释放指令
+            sb.driver.execute_cdp_cmd('Input.dispatchMouseEvent', {
+                'type': 'mousePressed', 'x': click_x, 'y': click_y, 'button': 'left', 'clickCount': 1
+            })
+            time.sleep(0.1)
+            sb.driver.execute_cdp_cmd('Input.dispatchMouseEvent', {
+                'type': 'mouseReleased', 'x': click_x, 'y': click_y, 'button': 'left', 'clickCount': 1
+            })
+            print("💥 CDP 物理点击事件已强行注入！")
+        except Exception as e:
+            print(f"⚠️ CDP 注入失败，使用回退点击: {e}")
+            sb.uc_gui_click_captcha()
+
+    # 3. 轮询等待 Token 刷新
+    print("⏳ 正在等待 Cloudflare 完成鉴权生成 Token...")
+    for i in range(15):
+        time.sleep(1)
+        token = sb.execute_script("let el = document.querySelector('[name=cf-turnstile-response]'); return el ? el.value : '';")
+        if token and len(token) > 20:
+            print(f"🎉 物理击穿成功！耗时 {i+1} 秒成功捕获 Token！")
+            return True
+    return False
+
+
 def first_visible(sb, selectors, timeout=20):
     end = time.time() + timeout
     while time.time() < end:
@@ -139,60 +195,18 @@ def main():
             
             sb.scroll_to(reset)
             sb.click(reset)
-            print("✅ 已打开续期弹窗，等待动画加载...")
-            sb.sleep(3)
+            print("✅ 已打开续期弹窗，等待动画与 Cloudflare 渲染...")
+            # 必须给 5 秒让转圈动画结束变成【Verify you are human】复选框
+            sb.sleep(5)
             save_shot(sb, "renew_confirmation_opened.png")
 
-            # 4. 【核心攻坚】切入 iframe 内部点击验证框
-            print("⏳ 正在定位 Cloudflare iframe 框架...")
-            iframe_xpath = "//iframe[contains(@src, 'challenges.cloudflare.com') or contains(@title, 'Cloudflare')]"
-            
-            # 等待 iframe 渲染
-            sb.wait_for_element_present(iframe_xpath, timeout=15)
-            
-            # 切换到 iframe 内部
-            sb.switch_to_frame(iframe_xpath)
-            print("🎯 成功切入 Cloudflare iframe 内部！")
-            sb.sleep(1)
-
-            # 点击 iframe 内部的复选框区域
-            cb_selectors = ["#challenge-stage", "input[type='checkbox']", ".mark", "body"]
-            clicked_cf = False
-            for cb in cb_selectors:
-                try:
-                    if sb.is_element_visible(cb):
-                        sb.click(cb)
-                        print(f"👆 成功点击 iframe 内的验证节点: {cb}")
-                        clicked_cf = True
-                        break
-                except Exception:
-                    pass
-            
-            if not clicked_cf:
-                # 备用：直接对 iframe 触发 UC 点击
-                sb.switch_to_parent_frame()
-                sb.uc_gui_click_captcha()
-            else:
-                sb.switch_to_parent_frame()
-
-            # 5. 轮询检测 Token 状态
-            print("⏳ 正在等待 Cloudflare 完成鉴权生成 Token...")
-            token_acquired = False
-            for i in range(20):
-                token = sb.execute_script(
-                    "let el = document.querySelector('[name=cf-turnstile-response]'); return el ? el.value : '';"
-                )
-                if token and len(token) > 20:
-                    print(f"🎉 成功获取到验证 Token (耗时 {i+1} 秒)！")
-                    token_acquired = True
-                    break
-                sb.sleep(1)
-
-            if not token_acquired:
+            # 4. 执行 CDP 物理强行点击击穿
+            success = force_cdp_click_cf(sb)
+            if not success:
                 save_shot(sb, "renew_captcha_failed.png")
-                raise RuntimeError("Cloudflare 验证未通过：未检测到生成的 Token，暂停提交以避免失败。")
+                raise RuntimeError("物理击穿未成功生成 Token，暂停提交。")
 
-            # 6. 点击 Just Reset 确认按钮
+            # 5. 点击 Just Reset 确认按钮
             confirm_xpath = ("//button[contains(translate(normalize-space(.), "
                              "'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'just reset')]")
             confirm_btn = first_visible(sb, [confirm_xpath, "button:contains('Just Reset')"], 10)
@@ -205,7 +219,7 @@ def main():
             sb.click(confirm_btn)
             sb.sleep(5)
 
-            # 7. 判断最终结果
+            # 6. 判断最终结果
             page_text = sb.get_page_source()
             if "Please complete the captcha verification" in page_text:
                 save_shot(sb, "renew_captcha_failed.png")

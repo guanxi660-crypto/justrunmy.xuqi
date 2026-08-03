@@ -97,6 +97,7 @@ def main():
 
     with SB(**kwargs) as sb:
         try:
+            sb.maximize_window()
             # 1. 打开首页并注入 Cookie
             sb.open("https://justrunmy.app")
             sb.sleep(2)
@@ -142,63 +143,73 @@ def main():
             sb.sleep(3)
             save_shot(sb, "renew_confirmation_opened.png")
 
-            # 4. 【核心改进】多选择器覆盖 + Token 状态实时监控
-            print("⏳ 正在监控 Cloudflare 人机验证状态...")
-            token_acquired = False
+            # 4. 【核心攻坚】切入 iframe 内部点击验证框
+            print("⏳ 正在定位 Cloudflare iframe 框架...")
+            iframe_xpath = "//iframe[contains(@src, 'challenges.cloudflare.com') or contains(@title, 'Cloudflare')]"
             
-            # 最多等待/点击 25 秒
-            for i in range(25):
-                # 读取页面隐藏域中的 Turnstile Token
+            # 等待 iframe 渲染
+            sb.wait_for_element_present(iframe_xpath, timeout=15)
+            
+            # 切换到 iframe 内部
+            sb.switch_to_frame(iframe_xpath)
+            print("🎯 成功切入 Cloudflare iframe 内部！")
+            sb.sleep(1)
+
+            # 点击 iframe 内部的复选框区域
+            cb_selectors = ["#challenge-stage", "input[type='checkbox']", ".mark", "body"]
+            clicked_cf = False
+            for cb in cb_selectors:
+                try:
+                    if sb.is_element_visible(cb):
+                        sb.click(cb)
+                        print(f"👆 成功点击 iframe 内的验证节点: {cb}")
+                        clicked_cf = True
+                        break
+                except Exception:
+                    pass
+            
+            if not clicked_cf:
+                # 备用：直接对 iframe 触发 UC 点击
+                sb.switch_to_parent_frame()
+                sb.uc_gui_click_captcha()
+            else:
+                sb.switch_to_parent_frame()
+
+            # 5. 轮询检测 Token 状态
+            print("⏳ 正在等待 Cloudflare 完成鉴权生成 Token...")
+            token_acquired = False
+            for i in range(20):
                 token = sb.execute_script(
                     "let el = document.querySelector('[name=cf-turnstile-response]'); return el ? el.value : '';"
                 )
-                if token:
-                    print(f"🎉 验证通过！成功捕获 Cloudflare Token (耗时 {i} 秒)")
+                if token and len(token) > 20:
+                    print(f"🎉 成功获取到验证 Token (耗时 {i+1} 秒)！")
                     token_acquired = True
                     break
-                
-                # 如果尚未生成 Token，尝试触发多重兼容的选择器
-                cf_selectors = [
-                    "iframe[title*='Cloudflare']",
-                    "iframe[title*='security challenge']",
-                    "iframe[src*='challenges']",
-                    "iframe[src*='cloudflare']",
-                    "div.cf-turnstile",
-                    "#cf-turnstile",
-                    ".cf-turnstile"
-                ]
-                
-                for sel in cf_selectors:
-                    try:
-                        if sb.is_element_visible(sel):
-                            sb.uc_click(sel)
-                            break
-                    except Exception:
-                        pass
-                
                 sb.sleep(1)
 
             if not token_acquired:
-                print("⚠️ 警告：25秒内未捕获到 Token，强行尝试点击提交...")
+                save_shot(sb, "renew_captcha_failed.png")
+                raise RuntimeError("Cloudflare 验证未通过：未检测到生成的 Token，暂停提交以避免失败。")
 
-            # 5. 点击 Just Reset 确认按钮
+            # 6. 点击 Just Reset 确认按钮
             confirm_xpath = ("//button[contains(translate(normalize-space(.), "
                              "'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'just reset')]")
             confirm_btn = first_visible(sb, [confirm_xpath, "button:contains('Just Reset')"], 10)
             
             if not confirm_btn:
                 save_shot(sb, "confirm_btn_not_found.png")
-                raise RuntimeError("已打开弹窗，但未找到 Just Reset 按钮")
+                raise RuntimeError("已通过验证，但未找到 Just Reset 按钮")
             
-            print("👉 正在点击最终续期确认按钮...")
+            print("👉 Token 已就绪，正在点击最终续期确认按钮...")
             sb.click(confirm_btn)
             sb.sleep(5)
 
-            # 6. 判断验证结果
+            # 7. 判断最终结果
             page_text = sb.get_page_source()
             if "Please complete the captcha verification" in page_text:
                 save_shot(sb, "renew_captcha_failed.png")
-                raise RuntimeError("续期失败：验证码未通过，Cloudflare 依然拦截了提交。")
+                raise RuntimeError("续期失败：服务器校验 Token 失败。")
 
             save_shot(sb, "renew_success.png")
             print("🎉 自动续期成功！")

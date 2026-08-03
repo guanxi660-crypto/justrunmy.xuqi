@@ -71,6 +71,35 @@ jobs:
             echo "⚠️ 未找到任何 SSH 主机配置，当前处于 Actions 机房裸奔直连模式。"
           fi
 
+      # 步骤 6: 将 Reset Timer XPath 改为不区分大小写
+      - name: 🔧 修复续期按钮大小写识别
+        run: |
+          python - <<'PYCODE'
+          from pathlib import Path
+          import re
+
+          path = Path("justrunmy_renew.py")
+          source = path.read_text(encoding="utf-8")
+          replacement = "//button[contains(translate(normalize-space(.), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'reset timer')]"
+          patterns = [
+              r"//button\[contains\(\s*\.\s*,\s*(['\"])reset\s+timer\1\s*\)\]",
+              r"//button\[contains\(\s*text\(\)\s*,\s*(['\"])reset\s+timer\1\s*\)\]",
+              r"//button\[contains\(\s*normalize-space\(\.\)\s*,\s*(['\"])reset\s+timer\1\s*\)\]",
+          ]
+          updated = source
+          total = 0
+          for pattern in patterns:
+              updated, count = re.subn(pattern, replacement, updated, flags=re.IGNORECASE)
+              total += count
+          if total:
+              path.write_text(updated, encoding="utf-8")
+              print(f"✅ 已修复 {total} 处，Reset timer 任意大小写均可识别")
+          elif "translate(normalize-space(.)" in source and "reset timer" in source.lower():
+              print("✅ 定位器已经支持任意大小写")
+          else:
+              print("⚠️ 未发现已知 XPath，继续运行原脚本，以便生成日志和截图")
+          PYCODE
+
       # 步骤 7: 执行脚本 (注入全新 SSH 安全中转环境变量)
       - name: 🚀 运行续期脚本
         env:
@@ -84,6 +113,7 @@ jobs:
           SSH_PASS: ${{ env.SSH_PASS }}
           SOCKS_PORT: ${{ env.SOCKS_PORT }}
         run: |
+          mkdir -p screenshots
           xvfb-run --auto-servernum --server-args="-screen 0 1920x1080x24" \
             python justrunmy_renew.py
 
@@ -93,14 +123,20 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: screenshots-${{ github.run_id }}
-          path: "*.png"
+          path: |
+            screenshots/**/*.png
+            screenshots/**/*.jpg
+            *.png
+            *.jpg
+          if-no-files-found: warn
           retention-days: 7
 
       # 步骤 9: 清理本地截图
       - name: 🧹 清理本地截图
         if: always()
         run: |
-          rm -f *.png
+          rm -rf screenshots
+          rm -f *.png *.jpg
           echo "✅ 本地截图已清理"
 
       # 步骤 10: 提交执行时间到公开库

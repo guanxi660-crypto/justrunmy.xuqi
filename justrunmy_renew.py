@@ -108,18 +108,33 @@ def main():
                 raise RuntimeError("登录页面未找到邮箱或密码输入框")
             sb.type(email_sel, email)
             sb.type(pass_sel, password)
-            try:
-                sb.uc_gui_click_captcha()
-                sb.sleep(2)
-            except Exception as exc:
-                print(f"⚠️ Turnstile 自动点击未执行或页面无需验证: {exc}")
+            # 如果网站要求人机验证，脚本不自动处理或规避。
+            # 登录结果会在提交后严格验证，避免误报为按钮不存在。
             submit = first_visible(sb, ["button[type='submit']", "input[type='submit']"], 10)
             if not submit:
                 raise RuntimeError("未找到登录按钮")
             sb.click(submit)
-            sb.sleep(5)
+            sb.sleep(6)
+
+            after_login_url = (sb.get_current_url() or "").lower()
+            login_form_visible = bool(first_visible(
+                sb, ["input[type='email']", "input[name='Email']", "#Email"], timeout=2
+            ))
+            if "/account/login" in after_login_url or login_form_visible:
+                save_shot(sb, "login_not_completed.png")
+                raise RuntimeError(
+                    "登录未完成，仍停留在登录页面。本次尚未进入应用详情页，"
+                    "所以不是 Reset timer 按钮定位失败。"
+                )
+
+            print(f"✅ 登录会话验证通过: {sb.get_current_url()}")
             sb.open(APP_URL)
+            sb.wait_for_ready_state_complete(timeout=30)
             sb.sleep(5)
+            current_url = (sb.get_current_url() or "").lower()
+            if "/account/login" in current_url:
+                save_shot(sb, "session_redirected_to_login.png")
+                raise RuntimeError("打开应用详情页时被重定向回登录页，登录会话无效")
 
             # XPath 1.0 translate() 实现真正的不区分大小写匹配。
             reset_xpath = ("//button[contains(translate(normalize-space(.), "
@@ -131,52 +146,11 @@ def main():
             sb.scroll_to(reset)
             sb.click(reset)
             sb.sleep(3)
-            print("✅ 已打开续期确认窗口")
-
-            final_reset_xpath = (
-                "//button[contains(translate(normalize-space(.), "
-                "'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'just reset')]"
+            save_shot(sb, "renew_confirmation_opened.png")
+            raise RuntimeError(
+                "已打开续期确认窗口，但最终确认需要完成页面要求的人工验证；"
+                "本脚本未执行 Just Reset，也不会误报续期成功。"
             )
-            final_reset = first_visible(sb, [final_reset_xpath], 15)
-            if not final_reset:
-                save_shot(sb, "renew_confirm_not_found.png")
-                raise RuntimeError("已打开续期窗口，但未找到 Just Reset 最终确认按钮")
-
-            # 不自动处理或规避 Cloudflare 验证。只有页面已有有效验证令牌才继续。
-            verified = False
-            for _ in range(24):
-                try:
-                    token = sb.execute_script(
-                        "var e=document.querySelector('input[name=\"cf-turnstile-response\"],"
-                        "textarea[name=\"cf-turnstile-response\"]'); return e ? e.value : '';"
-                    ) or ""
-                    if token.strip():
-                        verified = True
-                        break
-                except Exception:
-                    pass
-                sb.sleep(5)
-
-            if not verified:
-                save_shot(sb, "renew_waiting_for_human_verification.png")
-                raise RuntimeError("需要先完成人机验证；Just Reset 尚未执行，本次未续期")
-
-            print("✅ 页面验证状态已通过，点击 Just Reset")
-            sb.click(final_reset)
-            sb.sleep(5)
-
-            modal_still_open = False
-            try:
-                modal_still_open = sb.is_element_visible(final_reset_xpath)
-            except Exception:
-                pass
-            if modal_still_open:
-                save_shot(sb, "renew_final_confirmation_failed.png")
-                raise RuntimeError("点击 Just Reset 后确认窗口仍存在，未能确认续期成功")
-
-            save_shot(sb, "renew_success.png")
-            print("✅ Just Reset 已执行，确认窗口已关闭，续期成功")
-            notify("✅ JustRunMy.app 自动续期成功")
         except Exception as exc:
             save_shot(sb, "renew_failed.png")
             notify(f"❌ JustRunMy.app 自动续期失败: {exc}")

@@ -14,8 +14,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
-      JUSTRUNMY_EMAIL: ${{ secrets.JUSTRUNMY_EMAIL }}
-      JUSTRUNMY_PASSWORD: ${{ secrets.JUSTRUNMY_PASSWORD }}
+      JUSTRUNMY_COOKIE: ${{ secrets.JUSTRUNMY_COOKIE }}
       TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
       TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
       SSH_HOST: ${{ secrets.SSH_HOST }}

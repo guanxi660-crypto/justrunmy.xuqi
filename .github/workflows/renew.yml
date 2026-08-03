@@ -1,4 +1,4 @@
-name: JustRunMy 自动续期
+name: JustRunMy
 
 on:
   workflow_dispatch:
@@ -16,7 +16,6 @@ jobs:
     env:
       JUSTRUNMY_EMAIL: ${{ secrets.JUSTRUNMY_EMAIL }}
       JUSTRUNMY_PASSWORD: ${{ secrets.JUSTRUNMY_PASSWORD }}
-      JUSTRUNMY_APP_URL: ${{ secrets.JUSTRUNMY_APP_URL }}
       TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
       TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
       SSH_HOST: ${{ secrets.SSH_HOST }}
@@ -60,6 +59,7 @@ jobs:
             screenshots/
             *.png
             *.jpg
+            *.html
           if-no-files-found: warn
           retention-days: 7
 

@@ -12,7 +12,7 @@ import requests
 from seleniumbase import SB
 
 LOGIN_URL = "https://justrunmy.app/id/Account/Login"
-APP_URL = os.getenv("JUSTRUNMY_APP_URL", "https://justrunmy.app/panel/application/39529/")
+APP_URL = os.getenv("JUSTRUNMY_APP_URL", "").strip() or "https://justrunmy.app/panel/application/39529/"
 SCREENSHOT_DIR = Path(os.getenv("SCREENSHOT_DIR", "screenshots"))
 SCREENSHOT_DIR.mkdir(parents=True, exist_ok=True)
 ssh_process = None
@@ -70,9 +70,23 @@ def save_shot(sb, name):
     path = SCREENSHOT_DIR / name
     try:
         sb.save_screenshot(str(path))
-        print(f"📸 截图已保存: {path}")
+        print(f"📸 浏览器截图已保存: {path}")
     except Exception as exc:
-        print(f"⚠️ 截图保存失败: {exc}")
+        print(f"⚠️ 浏览器截图保存失败: {exc}")
+    # 同时保存整个 Xvfb 屏幕，避免 WebDriver 截图出现纯白。
+    screen_path = SCREENSHOT_DIR / name.replace(".png", "_screen.png")
+    try:
+        subprocess.run(["scrot", str(screen_path)], check=False, timeout=10)
+        if screen_path.exists():
+            print(f"📸 屏幕截图已保存: {screen_path}")
+    except Exception as exc:
+        print(f"⚠️ 屏幕截图保存失败: {exc}")
+    try:
+        html_path = SCREENSHOT_DIR / name.replace(".png", ".html")
+        html_path.write_text(sb.get_page_source(), encoding="utf-8")
+        print(f"📄 页面源码已保存: {html_path}")
+    except Exception as exc:
+        print(f"⚠️ 页面源码保存失败: {exc}")
 
 
 def first_visible(sb, selectors, timeout=20):
@@ -118,8 +132,22 @@ def main():
                 raise RuntimeError("未找到登录按钮")
             sb.click(submit)
             sb.sleep(5)
+            print(f"🌐 登录提交后的地址: {sb.get_current_url()}")
             sb.open(APP_URL)
+            sb.wait_for_ready_state_complete(timeout=30)
             sb.sleep(5)
+            print(f"🌐 应用详情页目标地址: {APP_URL}")
+            print(f"🌐 浏览器当前地址: {sb.get_current_url()}")
+            print(f"📄 页面标题: {sb.get_title()}")
+
+            # 空地址会打开空白页；这里给出明确错误而不是误报按钮不存在。
+            current_url = (sb.get_current_url() or "").lower()
+            if current_url in ("", "about:blank", "data:,"):
+                save_shot(sb, "renew_blank_page.png")
+                raise RuntimeError(f"浏览器打开了空白页，应用地址为: {APP_URL!r}")
+            if "/account/login" in current_url:
+                save_shot(sb, "renew_login_failed.png")
+                raise RuntimeError("登录后仍停留在登录页，请检查登录验证或账号密码")
 
             # XPath 1.0 translate() 实现真正的不区分大小写匹配。
             reset_xpath = ("//button[contains(translate(normalize-space(.), "

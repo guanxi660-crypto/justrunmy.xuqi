@@ -138,27 +138,48 @@ def main():
             
             sb.scroll_to(reset)
             sb.click(reset)
-            print("✅ 已打开续期弹窗，等待动画完成...")
+            print("✅ 已打开续期弹窗，等待动画加载...")
             sb.sleep(3)
             save_shot(sb, "renew_confirmation_opened.png")
 
-            # 4. 【核心修复】精准坐标点击 Cloudflare 验证框
-            print("⏳ 正在扫描 Cloudflare 人机验证框...")
-            try:
-                iframe_selector = "iframe[src*='challenges.cloudflare.com']"
-                # 给 iframe 足够的时间渲染出来
-                if sb.wait_for_element_visible(iframe_selector, timeout=10):
-                    print("🎯 成功捕获验证框 DOM，正在执行精准鼠标注入...")
-                    # 放弃 gui_click 的屏幕盲点，直接根据元素计算绝对坐标并注入鼠标点击
-                    sb.uc_click(iframe_selector)
-                    
-                    # 极其重要：必须给 Cloudflare 留出转圈和打勾的网络请求时间！
-                    print("⏳ 点击已下达！等待 8 秒让验证机制完成鉴权...")
-                    sb.sleep(8)
-                else:
-                    print("👍 未检测到验证框，可能当前环境已直接放行")
-            except Exception as e:
-                print(f"⚠️ 验证框捕获/点击超时，尝试直接执行下一步: {e}")
+            # 4. 【核心改进】多选择器覆盖 + Token 状态实时监控
+            print("⏳ 正在监控 Cloudflare 人机验证状态...")
+            token_acquired = False
+            
+            # 最多等待/点击 25 秒
+            for i in range(25):
+                # 读取页面隐藏域中的 Turnstile Token
+                token = sb.execute_script(
+                    "let el = document.querySelector('[name=cf-turnstile-response]'); return el ? el.value : '';"
+                )
+                if token:
+                    print(f"🎉 验证通过！成功捕获 Cloudflare Token (耗时 {i} 秒)")
+                    token_acquired = True
+                    break
+                
+                # 如果尚未生成 Token，尝试触发多重兼容的选择器
+                cf_selectors = [
+                    "iframe[title*='Cloudflare']",
+                    "iframe[title*='security challenge']",
+                    "iframe[src*='challenges']",
+                    "iframe[src*='cloudflare']",
+                    "div.cf-turnstile",
+                    "#cf-turnstile",
+                    ".cf-turnstile"
+                ]
+                
+                for sel in cf_selectors:
+                    try:
+                        if sb.is_element_visible(sel):
+                            sb.uc_click(sel)
+                            break
+                    except Exception:
+                        pass
+                
+                sb.sleep(1)
+
+            if not token_acquired:
+                print("⚠️ 警告：25秒内未捕获到 Token，强行尝试点击提交...")
 
             # 5. 点击 Just Reset 确认按钮
             confirm_xpath = ("//button[contains(translate(normalize-space(.), "
@@ -177,7 +198,7 @@ def main():
             page_text = sb.get_page_source()
             if "Please complete the captcha verification" in page_text:
                 save_shot(sb, "renew_captcha_failed.png")
-                raise RuntimeError("续期失败：底层绕过未生效，Cloudflare 依然拦截了提交。")
+                raise RuntimeError("续期失败：验证码未通过，Cloudflare 依然拦截了提交。")
 
             save_shot(sb, "renew_success.png")
             print("🎉 自动续期成功！")

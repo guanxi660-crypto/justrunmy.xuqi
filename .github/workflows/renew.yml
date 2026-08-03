@@ -24,6 +24,7 @@ jobs:
       SSH_PASS: ${{ secrets.SSH_PASS }}
       SOCKS_PORT: ${{ secrets.SOCKS_PORT || '51080' }}
       SCREENSHOT_DIR: screenshots
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
     steps:
       - name: 检出代码
@@ -75,3 +76,13 @@ jobs:
             git pull --rebase origin main
             git push origin HEAD:main
           fi
+
+      - name: 自动清理历史工作流记录（只保留当前运行）
+        if: always()
+        run: |
+          echo "开始清理除当前运行外的所有工作流记录..."
+          runs=$(gh run list --workflow="${{ github.workflow }}" --json databaseId --jq ".[] | select(.databaseId != ${{ github.run_id }}) | .databaseId")
+          for run_id in $runs; do
+            echo "正在删除运行记录: $run_id"
+            gh run delete "$run_id" || true
+          done

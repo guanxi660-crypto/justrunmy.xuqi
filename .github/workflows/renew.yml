@@ -1,168 +1,78 @@
 name: JustRunMy 自动续期
 
-# 触发条件
 on:
-  # 手动触发
   workflow_dispatch:
-  
-  # 定时触发 (每天凌晨1点)
   schedule:
-    - cron: '5 3 */1 * *'
+    - cron: '5 3 * * *'
 
-# 权限配置
 permissions:
   contents: write
   actions: write
 
-# 工作流任务
 jobs:
   renew:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
-      # ========== Secrets 配置 ==========
       JUSTRUNMY_EMAIL: ${{ secrets.JUSTRUNMY_EMAIL }}
       JUSTRUNMY_PASSWORD: ${{ secrets.JUSTRUNMY_PASSWORD }}
+      JUSTRUNMY_APP_URL: ${{ secrets.JUSTRUNMY_APP_URL }}
       TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
       TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
-      
-      # SSH 隧道中转节点代理配置
       SSH_HOST: ${{ secrets.SSH_HOST }}
       SSH_PORT: ${{ secrets.SSH_PORT || '22' }}
       SSH_USER: ${{ secrets.SSH_USER }}
       SSH_PASS: ${{ secrets.SSH_PASS }}
       SOCKS_PORT: ${{ secrets.SOCKS_PORT || '51080' }}
-      
-      # ========== 项目配置 ==========
       SCREENSHOT_DIR: screenshots
-    
-    steps:
-      # 步骤 1: 检出代码
-      - name: 📥 检出代码
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 1
 
-      # 步骤 2: 设置 Python 环境
-      - name: 🐍 设置 Python 3.11
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 设置 Python 3.11
         uses: actions/setup-python@v5
         with:
-          python-version: 3.11
+          python-version: '3.11'
 
-      # 步骤 3: 安装系统依赖 (升级安装 sshpass 与 openssh-client 依赖库)
-      - name: 📦 安装系统依赖
+      - name: 安装系统依赖
         run: |
           sudo apt-get update
           sudo apt-get install -y xvfb xdotool scrot fonts-noto-cjk sshpass openssh-client
 
-      # 步骤 4: 安装 Python 依赖
-      - name: 📚 安装 Python 依赖
+      - name: 安装 Python 依赖
         run: |
-          pip install --upgrade pip
-          pip install seleniumbase aiohttp requests
+          python -m pip install --upgrade pip
+          pip install seleniumbase requests
 
-      # 步骤 5: 校验 SSH 动态隧道直连配置状态
-      - name: 📡 校验 SSH 隧道直连配置状态
-        run: |
-          if [ -n "${{ env.SSH_HOST }}" ]; then
-            echo "✅ 成功识别到 SSH 动态安全中转节点: ${{ env.SSH_HOST }}"
-            echo "脚本在启动时将自动通过 sshpass 呼叫后台动态代理网络。"
-          else
-            echo "⚠️ 未找到任何 SSH 主机配置，当前处于 Actions 机房裸奔直连模式。"
-          fi
-
-      # 步骤 6: 将 Reset Timer XPath 改为不区分大小写
-      - name: 🔧 修复续期按钮大小写识别
-        run: |
-          python - <<'PYCODE'
-          from pathlib import Path
-          import re
-
-          path = Path("justrunmy_renew.py")
-          source = path.read_text(encoding="utf-8")
-          replacement = "//button[contains(translate(normalize-space(.), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'reset timer')]"
-          patterns = [
-              r"//button\[contains\(\s*\.\s*,\s*(['\"])reset\s+timer\1\s*\)\]",
-              r"//button\[contains\(\s*text\(\)\s*,\s*(['\"])reset\s+timer\1\s*\)\]",
-              r"//button\[contains\(\s*normalize-space\(\.\)\s*,\s*(['\"])reset\s+timer\1\s*\)\]",
-          ]
-          updated = source
-          total = 0
-          for pattern in patterns:
-              updated, count = re.subn(pattern, replacement, updated, flags=re.IGNORECASE)
-              total += count
-          if total:
-              path.write_text(updated, encoding="utf-8")
-              print(f"✅ 已修复 {total} 处，Reset timer 任意大小写均可识别")
-          elif "translate(normalize-space(.)" in source and "reset timer" in source.lower():
-              print("✅ 定位器已经支持任意大小写")
-          else:
-              print("⚠️ 未发现已知 XPath，继续运行原脚本，以便生成日志和截图")
-          PYCODE
-
-      # 步骤 7: 执行脚本 (注入全新 SSH 安全中转环境变量)
-      - name: 🚀 运行续期脚本
-        env:
-          JUSTRUNMY_EMAIL: ${{ env.JUSTRUNMY_EMAIL }}
-          JUSTRUNMY_PASSWORD: ${{ env.JUSTRUNMY_PASSWORD }}
-          TG_BOT_TOKEN: ${{ env.TG_BOT_TOKEN }}
-          TG_CHAT_ID: ${{ env.TG_CHAT_ID }}
-          SSH_HOST: ${{ env.SSH_HOST }}
-          SSH_PORT: ${{ env.SSH_PORT }}
-          SSH_USER: ${{ env.SSH_USER }}
-          SSH_PASS: ${{ env.SSH_PASS }}
-          SOCKS_PORT: ${{ env.SOCKS_PORT }}
+      - name: 运行续期脚本
         run: |
           mkdir -p screenshots
           xvfb-run --auto-servernum --server-args="-screen 0 1920x1080x24" \
             python justrunmy_renew.py
 
-      # 步骤 8: 上传截图
-      - name: 📸 上传截图
+      - name: 上传截图和页面诊断
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: screenshots-${{ github.run_id }}
           path: |
-            screenshots/**/*.png
-            screenshots/**/*.jpg
+            screenshots/
             *.png
             *.jpg
           if-no-files-found: warn
           retention-days: 7
 
-      # 步骤 9: 清理本地截图
-      - name: 🧹 清理本地截图
-        if: always()
-        run: |
-          rm -rf screenshots
-          rm -f *.png *.jpg
-          echo "✅ 本地截图已清理"
-
-      # 步骤 10: 提交执行时间到公开库
-      - name: ⏱️ 提交执行时间
+      - name: 提交执行时间
         if: always()
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          mkdir -p justrunmy && echo "$(date +'%Y-%m-%d %H:%M:%S')" > justrunmy/time.txt
-          git add justrunmy/time.txt 2>/dev/null || true
-          if git diff --cached --quiet; then
-            echo "无变化，无需提交"
-          else
-            TIMESTAMP=$(date +'%Y-%m-%d %H:%M:%S')
-            git commit -m "⏱️ 更新执行时间: $TIMESTAMP"
-            git fetch origin main
+          mkdir -p justrunmy
+          date -u +'%Y-%m-%d %H:%M:%S UTC' > justrunmy/time.txt
+          git add justrunmy/time.txt
+          if ! git diff --cached --quiet; then
+            git commit -m "更新 JustRunMy 执行时间"
+            git pull --rebase origin main
             git push origin HEAD:main
-            echo "✅ 更改已推送"
           fi
-
-      # 步骤 11: 始终只保留最近 2 条记录 (根据您的配置偏好严格清理历史)
-      - name: 🧹 清理旧的工作流运行记录
-        uses: Mattraks/delete-workflow-runs@v2
-        with:
-          token: ${{ github.token }}
-          repository: ${{ github.repository }}
-          delete_workflow_pattern: ${{ github.workflow }}
-          retain_days: 0
-          keep_minimum_runs: 2

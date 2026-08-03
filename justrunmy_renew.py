@@ -138,15 +138,27 @@ def main():
             
             sb.scroll_to(reset)
             sb.click(reset)
+            print("✅ 已打开续期弹窗，等待动画完成...")
             sb.sleep(3)
             save_shot(sb, "renew_confirmation_opened.png")
 
-            # 4. 尝试通过 SeleniumBase UC 模式触发 Cloudflare 验证框
+            # 4. 【核心修复】精准坐标点击 Cloudflare 验证框
+            print("⏳ 正在扫描 Cloudflare 人机验证框...")
             try:
-                sb.uc_gui_click_captcha()
-                sb.sleep(3)
-            except Exception:
-                pass
+                iframe_selector = "iframe[src*='challenges.cloudflare.com']"
+                # 给 iframe 足够的时间渲染出来
+                if sb.wait_for_element_visible(iframe_selector, timeout=10):
+                    print("🎯 成功捕获验证框 DOM，正在执行精准鼠标注入...")
+                    # 放弃 gui_click 的屏幕盲点，直接根据元素计算绝对坐标并注入鼠标点击
+                    sb.uc_click(iframe_selector)
+                    
+                    # 极其重要：必须给 Cloudflare 留出转圈和打勾的网络请求时间！
+                    print("⏳ 点击已下达！等待 8 秒让验证机制完成鉴权...")
+                    sb.sleep(8)
+                else:
+                    print("👍 未检测到验证框，可能当前环境已直接放行")
+            except Exception as e:
+                print(f"⚠️ 验证框捕获/点击超时，尝试直接执行下一步: {e}")
 
             # 5. 点击 Just Reset 确认按钮
             confirm_xpath = ("//button[contains(translate(normalize-space(.), "
@@ -157,6 +169,7 @@ def main():
                 save_shot(sb, "confirm_btn_not_found.png")
                 raise RuntimeError("已打开弹窗，但未找到 Just Reset 按钮")
             
+            print("👉 正在点击最终续期确认按钮...")
             sb.click(confirm_btn)
             sb.sleep(5)
 
@@ -164,7 +177,7 @@ def main():
             page_text = sb.get_page_source()
             if "Please complete the captcha verification" in page_text:
                 save_shot(sb, "renew_captcha_failed.png")
-                raise RuntimeError("续期失败：点击 Just Reset 后仍提示需要人机验证")
+                raise RuntimeError("续期失败：底层绕过未生效，Cloudflare 依然拦截了提交。")
 
             save_shot(sb, "renew_success.png")
             print("🎉 自动续期成功！")

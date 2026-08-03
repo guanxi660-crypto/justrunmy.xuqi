@@ -74,16 +74,24 @@ def save_shot(sb, name):
 
 
 def force_cdp_click_cf(sb):
-    """底层 CDP 坐标物理强行点击"""
-    # 1. 先查 token 是否已经自动好了
-    token = sb.execute_script("let el = document.querySelector('[name=cf-turnstile-response]'); return el ? el.value : '';")
+    """CDP 物理坐标精准击穿"""
+    # 1. 检查 Token 是否已就绪（用 IIFE 包裹）
+    check_token_js = """
+    (() => {
+        let el = document.querySelector('[name=cf-turnstile-response]');
+        return el ? el.value : '';
+    })()
+    """
+    token = sb.execute_script(check_token_js)
     if token and len(token) > 20:
         print("🎉 Cloudflare 自动检测已通过，无需点击！")
         return True
 
     print("🎯 启动 CDP 物理坐标定位...")
-    # 2. 计算 iframe 容器在 viewport 中的像素位置
-    rect = sb.execute_script("""
+    
+    # 2. 算坐标（用 IIFE 包裹）
+    get_rect_js = """
+    (() => {
         let el = document.querySelector("iframe[src*='challenges']") || 
                  document.querySelector("iframe[title*='Cloudflare']") ||
                  document.querySelector("iframe[src*='cloudflare']") ||
@@ -93,19 +101,23 @@ def force_cdp_click_cf(sb):
         if (!el) return null;
         let r = el.getBoundingClientRect();
         return {left: r.left, top: r.top, width: r.width, height: r.height};
-    """)
+    })()
+    """
+    rect = sb.execute_script(get_rect_js)
 
     if not rect:
-        print("⚠️ JS 依然未能锁定控件，启用全屏物理回退点击...")
-        sb.uc_gui_click_captcha()
+        print("⚠️ JS 依然未能锁定控件，使用 UC 盲点备用方案...")
+        try:
+            sb.uc_gui_click_captcha()
+        except Exception as e:
+            print(f"盲点执行完成: {e}")
     else:
-        # 复选框通常在 Turnstile 框左侧 35 像素，高度居中的位置
+        # 复选框居左 35px，高度居中
         click_x = int(rect['left'] + 35)
         click_y = int(rect['top'] + (rect['height'] / 2))
-        print(f"📍 捕获复选框绝对坐标: X={click_x}, Y={click_y}，发送 CDP 鼠标事件...")
+        print(f"📍 捕获复选框绝对坐标: X={click_x}, Y={click_y}，下发 CDP 物理点击...")
 
         try:
-            # 向 Chrome 内核直接发送鼠标按压与释放指令
             sb.driver.execute_cdp_cmd('Input.dispatchMouseEvent', {
                 'type': 'mousePressed', 'x': click_x, 'y': click_y, 'button': 'left', 'clickCount': 1
             })
@@ -113,19 +125,20 @@ def force_cdp_click_cf(sb):
             sb.driver.execute_cdp_cmd('Input.dispatchMouseEvent', {
                 'type': 'mouseReleased', 'x': click_x, 'y': click_y, 'button': 'left', 'clickCount': 1
             })
-            print("💥 CDP 物理点击事件已强行注入！")
+            print("💥 CDP 物理点击成功注入！")
         except Exception as e:
-            print(f"⚠️ CDP 注入失败，使用回退点击: {e}")
+            print(f"⚠️ CDP 注入异常，回退 UC 点击: {e}")
             sb.uc_gui_click_captcha()
 
-    # 3. 轮询等待 Token 刷新
+    # 3. 轮询等待 Token 生成
     print("⏳ 正在等待 Cloudflare 完成鉴权生成 Token...")
     for i in range(15):
         time.sleep(1)
-        token = sb.execute_script("let el = document.querySelector('[name=cf-turnstile-response]'); return el ? el.value : '';")
+        token = sb.execute_script(check_token_js)
         if token and len(token) > 20:
             print(f"🎉 物理击穿成功！耗时 {i+1} 秒成功捕获 Token！")
             return True
+            
     return False
 
 
@@ -196,11 +209,10 @@ def main():
             sb.scroll_to(reset)
             sb.click(reset)
             print("✅ 已打开续期弹窗，等待动画与 Cloudflare 渲染...")
-            # 必须给 5 秒让转圈动画结束变成【Verify you are human】复选框
             sb.sleep(5)
             save_shot(sb, "renew_confirmation_opened.png")
 
-            # 4. 执行 CDP 物理强行点击击穿
+            # 4. 执行 CDP 物理点击击穿
             success = force_cdp_click_cf(sb)
             if not success:
                 save_shot(sb, "renew_captcha_failed.png")

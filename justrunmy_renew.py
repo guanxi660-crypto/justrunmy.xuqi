@@ -70,23 +70,9 @@ def save_shot(sb, name):
     path = SCREENSHOT_DIR / name
     try:
         sb.save_screenshot(str(path))
-        print(f"📸 浏览器截图已保存: {path}")
+        print(f"📸 截图已保存: {path}")
     except Exception as exc:
-        print(f"⚠️ 浏览器截图保存失败: {exc}")
-    # 同时保存整个 Xvfb 屏幕，避免 WebDriver 截图出现纯白。
-    screen_path = SCREENSHOT_DIR / name.replace(".png", "_screen.png")
-    try:
-        subprocess.run(["scrot", str(screen_path)], check=False, timeout=10)
-        if screen_path.exists():
-            print(f"📸 屏幕截图已保存: {screen_path}")
-    except Exception as exc:
-        print(f"⚠️ 屏幕截图保存失败: {exc}")
-    try:
-        html_path = SCREENSHOT_DIR / name.replace(".png", ".html")
-        html_path.write_text(sb.get_page_source(), encoding="utf-8")
-        print(f"📄 页面源码已保存: {html_path}")
-    except Exception as exc:
-        print(f"⚠️ 页面源码保存失败: {exc}")
+        print(f"⚠️ 截图保存失败: {exc}")
 
 
 def first_visible(sb, selectors, timeout=20):
@@ -132,22 +118,8 @@ def main():
                 raise RuntimeError("未找到登录按钮")
             sb.click(submit)
             sb.sleep(5)
-            print(f"🌐 登录提交后的地址: {sb.get_current_url()}")
             sb.open(APP_URL)
-            sb.wait_for_ready_state_complete(timeout=30)
             sb.sleep(5)
-            print(f"🌐 应用详情页目标地址: {APP_URL}")
-            print(f"🌐 浏览器当前地址: {sb.get_current_url()}")
-            print(f"📄 页面标题: {sb.get_title()}")
-
-            # 空地址会打开空白页；这里给出明确错误而不是误报按钮不存在。
-            current_url = (sb.get_current_url() or "").lower()
-            if current_url in ("", "about:blank", "data:,"):
-                save_shot(sb, "renew_blank_page.png")
-                raise RuntimeError(f"浏览器打开了空白页，应用地址为: {APP_URL!r}")
-            if "/account/login" in current_url:
-                save_shot(sb, "renew_login_failed.png")
-                raise RuntimeError("登录后仍停留在登录页，请检查登录验证或账号密码")
 
             # XPath 1.0 translate() 实现真正的不区分大小写匹配。
             reset_xpath = ("//button[contains(translate(normalize-space(.), "
@@ -158,10 +130,53 @@ def main():
                 raise RuntimeError("找不到 Reset timer 按钮")
             sb.scroll_to(reset)
             sb.click(reset)
-            sb.sleep(4)
+            sb.sleep(3)
+            print("✅ 已打开续期确认窗口")
+
+            final_reset_xpath = (
+                "//button[contains(translate(normalize-space(.), "
+                "'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'just reset')]"
+            )
+            final_reset = first_visible(sb, [final_reset_xpath], 15)
+            if not final_reset:
+                save_shot(sb, "renew_confirm_not_found.png")
+                raise RuntimeError("已打开续期窗口，但未找到 Just Reset 最终确认按钮")
+
+            # 不自动处理或规避 Cloudflare 验证。只有页面已有有效验证令牌才继续。
+            verified = False
+            for _ in range(24):
+                try:
+                    token = sb.execute_script(
+                        "var e=document.querySelector('input[name=\"cf-turnstile-response\"],"
+                        "textarea[name=\"cf-turnstile-response\"]'); return e ? e.value : '';"
+                    ) or ""
+                    if token.strip():
+                        verified = True
+                        break
+                except Exception:
+                    pass
+                sb.sleep(5)
+
+            if not verified:
+                save_shot(sb, "renew_waiting_for_human_verification.png")
+                raise RuntimeError("需要先完成人机验证；Just Reset 尚未执行，本次未续期")
+
+            print("✅ 页面验证状态已通过，点击 Just Reset")
+            sb.click(final_reset)
+            sb.sleep(5)
+
+            modal_still_open = False
+            try:
+                modal_still_open = sb.is_element_visible(final_reset_xpath)
+            except Exception:
+                pass
+            if modal_still_open:
+                save_shot(sb, "renew_final_confirmation_failed.png")
+                raise RuntimeError("点击 Just Reset 后确认窗口仍存在，未能确认续期成功")
+
             save_shot(sb, "renew_success.png")
-            print("✅ 已点击 Reset timer，续期流程完成")
-            notify("✅ JustRunMy.app 自动续期完成")
+            print("✅ Just Reset 已执行，确认窗口已关闭，续期成功")
+            notify("✅ JustRunMy.app 自动续期成功")
         except Exception as exc:
             save_shot(sb, "renew_failed.png")
             notify(f"❌ JustRunMy.app 自动续期失败: {exc}")

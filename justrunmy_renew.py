@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""JustRunMy.app 
 import os
 import socket
 import subprocess

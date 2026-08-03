@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""JustRunMy.app 自动续期 (Cookie 免登录版)。"""
+"""JustRunMy.app 自动续期 (Cookie 免登录 + 击穿 Turnstile 验证版)。"""
 import os
 import socket
 import subprocess
@@ -15,7 +15,6 @@ SCREENSHOT_DIR = Path(os.getenv("SCREENSHOT_DIR", "screenshots"))
 SCREENSHOT_DIR.mkdir(parents=True, exist_ok=True)
 ssh_process = None
 
-# 从环境变量读取 Cookie（建议将长串 Cookie 保存到 GitHub Secrets 中）
 RAW_COOKIE = os.getenv("JUSTRUNMY_COOKIE", "").strip()
 
 
@@ -100,7 +99,7 @@ def main():
 
     with SB(**kwargs) as sb:
         try:
-            # 1. 打开主域名以建立域名上下文，然后注入 Cookie
+            # 1. 注入 Cookie
             sb.open("https://justrunmy.app")
             sb.sleep(2)
 
@@ -119,7 +118,7 @@ def main():
                             pass
             print("🍪 已成功注入 Cookie")
 
-            # 2. 直接打开应用详情页
+            # 2. 打开应用详情页
             sb.open(APP_URL)
             sb.wait_for_ready_state_complete(timeout=30)
             sb.sleep(5)
@@ -131,7 +130,7 @@ def main():
 
             print(f"✅ 成功进入应用页面: {sb.get_current_url()}")
 
-            # 3. 寻找并点击 Reset timer 按钮
+            # 3. 点击 Reset timer 打开弹窗
             reset_xpath = ("//button[contains(translate(normalize-space(.), "
                            "'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'reset timer')]")
             reset = first_visible(sb, [reset_xpath, "button:contains('Reset timer')", "button:contains('Reset Timer')"], 25)
@@ -144,21 +143,70 @@ def main():
             sb.sleep(3)
             save_shot(sb, "renew_confirmation_opened.png")
 
-            # 4. 点击弹窗确认 (Just Reset / Confirm)
-            confirm_xpath = ("//button[contains(translate(normalize-space(.), "
-                             "'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'just reset') "
-                             "or contains(translate(normalize-space(.), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'confirm')]")
-            confirm_btn = first_visible(sb, [confirm_xpath, "button:contains('Just Reset')", "button:contains('Confirm')"], 10)
+            # 4. 底层突破 Turnstile 人机验证
+            print("⏳ 正在尝试穿透 Cloudflare 人机验证...")
             
-            if confirm_btn:
-                sb.click(confirm_btn)
-                sb.sleep(5)
-                save_shot(sb, "renew_success.png")
-                print("🎉 自动续期指令已成功提交！")
-                notify("✅ JustRunMy.app 自动续期成功！")
-            else:
+            # 自动模式辅助击穿
+            try:
+                sb.uc_gui_click_captcha()
+            except Exception:
+                pass
+
+            # 轮询 JS 检查 cf-turnstile-response 隐藏域是否拿到了有效 Token
+            token_valid = False
+            for i in range(12):
+                try:
+                    token = sb.execute_script(
+                        'let el = document.querySelector("[name=cf-turnstile-response]"); return el ? el.value : "";'
+                    )
+                    if token and len(token) > 20:
+                        token_valid = True
+                        print(f"✅ 人机验证通过！检测到有效 Token (长度: {len(token)})")
+                        break
+                except Exception:
+                    pass
+                
+                # 如果前几秒还没过，尝试对 iframe 实施精准物理定位点击
+                if i == 3 or i == 6:
+                    try:
+                        if sb.is_element_visible("iframe[src*='turnstile']"):
+                            sb.uc_click("iframe[src*='turnstile']")
+                    except Exception:
+                        pass
+                
+                sb.sleep(1)
+
+            if not token_valid:
+                print("⚠️ 警告：未在预期时间内捕捉到 CF Token，仍将尝试强行点击...")
+
+            # 5. 点击 Just Reset 按钮
+            confirm_xpath = ("//button[contains(translate(normalize-space(.), "
+                             "'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'just reset')]")
+            confirm_btn = first_visible(sb, [confirm_xpath, "button:contains('Just Reset')"], 10)
+            
+            if not confirm_btn:
                 save_shot(sb, "confirm_btn_not_found.png")
-                raise RuntimeError("已打开确认弹窗，但未找到确认/Just Reset 按钮")
+                raise RuntimeError("已打开确认弹窗，但未找到 Just Reset 按钮")
+            
+            sb.click(confirm_btn)
+            sb.sleep(5)
+
+            # 6. 严苛校验：检查是否依然残存报错文字
+            has_error = False
+            try:
+                page_text = sb.get_page_source()
+                if "Please complete the captcha verification" in page_text or "Captcha code is invalid" in page_text:
+                    has_error = True
+            except Exception:
+                pass
+
+            if has_error:
+                save_shot(sb, "renew_captcha_failed.png")
+                raise RuntimeError("续期失败：点击 Just Reset 后，页面仍提示 'Please complete the captcha verification'（人机验证未通过）")
+
+            save_shot(sb, "renew_success.png")
+            print("🎉 自动续期成功！验证通过且未发现报错提示。")
+            notify("✅ JustRunMy.app 自动续期成功！")
 
         except Exception as exc:
             save_shot(sb, "renew_failed.png")

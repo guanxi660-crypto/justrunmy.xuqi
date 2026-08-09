@@ -74,7 +74,7 @@ def save_shot(sb, name):
 
 
 def force_cdp_click_cf(sb):
-    """CDP 物理坐标精准击穿（带 Shadow DOM 递归穿透与拟人化点击）"""
+    """CDP 物理坐标精准击穿（带 Shadow DOM 递归穿透与拟人时延）"""
     check_token_js = """
     (() => {
         let el = document.querySelector('[name=cf-turnstile-response]');
@@ -141,7 +141,6 @@ def force_cdp_click_cf(sb):
             print(f"📍 精准锁定复选框坐标: X={click_x}, Y={click_y}")
 
             try:
-                # 拟人化轨迹与延时
                 sb.driver.execute_cdp_cmd('Input.dispatchMouseEvent', {
                     'type': 'mouseMoved', 'x': click_x, 'y': click_y
                 })
@@ -222,7 +221,7 @@ def main():
                             pass
             print("🍪 已成功注入 Cookie")
 
-            # 2. 直奔应用详情页
+            # 2. 进入应用详情页
             sb.open(APP_URL)
             sb.wait_for_ready_state_complete(timeout=30)
             sb.sleep(5)
@@ -252,20 +251,27 @@ def main():
                 except Exception:
                     pass
 
-            # 2.2 检查应用是否处于 Stopped 状态，若已停止则先点击 Start 启动
-            start_xpath = ("//button[contains(translate(normalize-space(.), "
-                           "'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'start') "
-                           "and not(contains(translate(normalize-space(.), "
-                           "'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'restart'))]")
-            try:
-                if sb.is_element_visible("button:contains('Start')") or sb.is_element_visible(start_xpath):
-                    print("▶️ 检测到应用处于 Stopped 状态，正在点击 Start 启动按钮...")
-                    start_btn = first_visible(sb, [start_xpath, "button:contains('Start')"], 5)
-                    if start_btn:
-                        sb.click(start_btn)
+            # 2.2 仅当应用真正为 Stopped 状态时，精确匹配并点击独占的 Start 按钮
+            page_src = sb.get_page_source()
+            if "Application is stopped" in page_src:
+                print("▶️ 判定应用确实处于 Stopped 状态，准备启动...")
+                # 使用严格精准匹配 XPath，防止误触 "Restart"
+                exact_start_xpath = "//button[translate(normalize-space(text()), 'START', 'start')='start']"
+                try:
+                    if sb.is_element_visible(exact_start_xpath):
+                        sb.click(exact_start_xpath)
+                        print("✅ 已点击 Start 启动按钮")
                         sb.sleep(5)
-            except Exception as e:
-                print(f"⚠️ 状态检测提示: {e}")
+                except Exception as e:
+                    print(f"⚠️ 启动操作提示: {e}")
+
+            # 2.3 路由安全检查：确保当前页面处于主概览页而非 Deployment 页
+            target_app_id = APP_URL.rstrip("/").split("/")[-1]
+            if target_app_id not in sb.get_current_url():
+                print(f"🔄 检测到页面偏离，重新切回应用概览主页: {APP_URL}")
+                sb.open(APP_URL)
+                sb.wait_for_ready_state_complete(timeout=30)
+                sb.sleep(3)
 
             # 3. 点击 Reset timer 按钮打开弹窗
             reset_xpath = ("//button[contains(translate(normalize-space(.), "
@@ -281,7 +287,7 @@ def main():
             sb.sleep(5)
             save_shot(sb, "renew_confirmation_opened.png")
 
-            # 4. 执行 CDP 物理点击击穿（含 Shadow DOM 与拟人时延）
+            # 4. 执行 CDP 物理点击击穿
             success = force_cdp_click_cf(sb)
             if not success:
                 save_shot(sb, "renew_captcha_failed.png")

@@ -75,7 +75,6 @@ def save_shot(sb, name):
 
 def force_cdp_click_cf(sb):
     """CDP 物理坐标精准击穿"""
-    # 1. 检查 Token 是否已就绪（用 IIFE 包裹）
     check_token_js = """
     (() => {
         let el = document.querySelector('[name=cf-turnstile-response]');
@@ -88,8 +87,6 @@ def force_cdp_click_cf(sb):
         return True
 
     print("🎯 启动 CDP 物理坐标定位...")
-    
-    # 2. 算坐标（用 IIFE 包裹）
     get_rect_js = """
     (() => {
         let el = document.querySelector("iframe[src*='challenges']") || 
@@ -106,13 +103,12 @@ def force_cdp_click_cf(sb):
     rect = sb.execute_script(get_rect_js)
 
     if not rect:
-        print("⚠️ JS 依然未能锁定控件，使用 UC 盲点备用方案...")
+        print("⚠️ JS 未能锁定控件，使用 UC 盲点备用方案...")
         try:
             sb.uc_gui_click_captcha()
         except Exception as e:
             print(f"盲点执行完成: {e}")
     else:
-        # 复选框居左 35px，高度居中
         click_x = int(rect['left'] + 35)
         click_y = int(rect['top'] + (rect['height'] / 2))
         print(f"📍 捕获复选框绝对坐标: X={click_x}, Y={click_y}，下发 CDP 物理点击...")
@@ -130,7 +126,6 @@ def force_cdp_click_cf(sb):
             print(f"⚠️ CDP 注入异常，回退 UC 点击: {e}")
             sb.uc_gui_click_captcha()
 
-    # 3. 轮询等待 Token 生成
     print("⏳ 正在等待 Cloudflare 完成鉴权生成 Token...")
     for i in range(15):
         time.sleep(1)
@@ -197,6 +192,39 @@ def main():
                 raise RuntimeError("Cookie 已失效，页面被重定向到了登录页，请更换最新的 JUSTRUNMY_COOKIE！")
 
             print(f"✅ 成功进入应用页面: {sb.get_current_url()}")
+
+            # 2.1 自动清理未读消息/系统公告弹窗 (如 "You have an unread message")
+            close_btns = [
+                "button:contains('Confirm')",
+                "button:contains('Close')",
+                "//button[contains(translate(normalize-space(.), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'confirm')]",
+                "//button[contains(translate(normalize-space(.), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'close')]",
+                "div[role='dialog'] button"
+            ]
+            for btn in close_btns:
+                try:
+                    if sb.is_element_visible(btn):
+                        print(f"🔔 检测到未读消息/弹窗，自动点击关闭: {btn}")
+                        sb.click(btn)
+                        sb.sleep(2)
+                        break
+                except Exception:
+                    pass
+
+            # 2.2 检查应用是否处于 Stopped 状态，若已停止则先点击 Start 启动
+            start_xpath = ("//button[contains(translate(normalize-space(.), "
+                           "'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'start') "
+                           "and not(contains(translate(normalize-space(.), "
+                           "'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'restart'))]")
+            try:
+                if sb.is_element_visible("button:contains('Start')") or sb.is_element_visible(start_xpath):
+                    print("▶️ 检测到应用处于 Stopped 状态，正在点击 Start 启动按钮...")
+                    start_btn = first_visible(sb, [start_xpath, "button:contains('Start')"], 5)
+                    if start_btn:
+                        sb.click(start_btn)
+                        sb.sleep(5)
+            except Exception as e:
+                print(f"⚠️ 状态检测提示: {e}")
 
             # 3. 点击 Reset timer 按钮打开弹窗
             reset_xpath = ("//button[contains(translate(normalize-space(.), "

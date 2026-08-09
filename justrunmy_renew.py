@@ -74,7 +74,7 @@ def save_shot(sb, name):
 
 
 def force_cdp_click_cf(sb):
-    """CDP 物理坐标精准击穿"""
+    """CDP 物理坐标精准击穿（带 Shadow DOM 递归穿透与拟人化点击）"""
     check_token_js = """
     (() => {
         let el = document.querySelector('[name=cf-turnstile-response]');
@@ -89,51 +89,92 @@ def force_cdp_click_cf(sb):
     print("🎯 启动 CDP 物理坐标定位...")
     get_rect_js = """
     (() => {
-        let el = document.querySelector("iframe[src*='challenges']") || 
-                 document.querySelector("iframe[title*='Cloudflare']") ||
-                 document.querySelector("iframe[src*='cloudflare']") ||
-                 document.querySelector(".cf-turnstile") ||
-                 document.querySelector("#cf-turnstile") ||
-                 document.querySelector("iframe");
+        function findTarget(root) {
+            if (!root) return null;
+            let iframe = root.querySelector("iframe[src*='challenges'], iframe[title*='Cloudflare'], iframe[src*='cloudflare']");
+            if (iframe) return iframe;
+
+            let ts = root.querySelector(".cf-turnstile, #cf-turnstile, [data-sitekey]");
+            if (ts) return ts;
+
+            let all = root.querySelectorAll('*');
+            for (let el of all) {
+                if (el.shadowRoot) {
+                    let res = findTarget(el.shadowRoot);
+                    if (res) return res;
+                }
+            }
+            return null;
+        }
+
+        let el = findTarget(document);
+
+        if (!el) {
+            let iframes = document.querySelectorAll("iframe");
+            for (let f of iframes) {
+                let r = f.getBoundingClientRect();
+                if (r.width > 100 && r.height > 30) {
+                    el = f;
+                    break;
+                }
+            }
+        }
+
+        if (!el) {
+            let elems = Array.from(document.querySelectorAll('div, span, section'));
+            el = elems.find(e => e.innerText && e.innerText.includes('Verify you are human'));
+        }
+
         if (!el) return null;
         let r = el.getBoundingClientRect();
         return {left: r.left, top: r.top, width: r.width, height: r.height};
     })()
     """
-    rect = sb.execute_script(get_rect_js)
 
-    if not rect:
-        print("⚠️ JS 未能锁定控件，使用 UC 盲点备用方案...")
-        try:
-            sb.uc_gui_click_captcha()
-        except Exception as e:
-            print(f"盲点执行完成: {e}")
-    else:
-        click_x = int(rect['left'] + 35)
-        click_y = int(rect['top'] + (rect['height'] / 2))
-        print(f"📍 捕获复选框绝对坐标: X={click_x}, Y={click_y}，下发 CDP 物理点击...")
+    for attempt in range(1, 4):
+        print(f"🔄 正在进行第 {attempt} 次 Cloudflare 验证击穿尝试...")
+        rect = sb.execute_script(get_rect_js)
 
-        try:
-            sb.driver.execute_cdp_cmd('Input.dispatchMouseEvent', {
-                'type': 'mousePressed', 'x': click_x, 'y': click_y, 'button': 'left', 'clickCount': 1
-            })
-            time.sleep(0.1)
-            sb.driver.execute_cdp_cmd('Input.dispatchMouseEvent', {
-                'type': 'mouseReleased', 'x': click_x, 'y': click_y, 'button': 'left', 'clickCount': 1
-            })
-            print("💥 CDP 物理点击成功注入！")
-        except Exception as e:
-            print(f"⚠️ CDP 注入异常，回退 UC 点击: {e}")
-            sb.uc_gui_click_captcha()
+        if rect and rect['width'] > 0 and rect['height'] > 0:
+            click_x = int(rect['left'] + min(35, rect['width'] * 0.15))
+            click_y = int(rect['top'] + (rect['height'] / 2))
+            print(f"📍 精准锁定复选框坐标: X={click_x}, Y={click_y}")
 
-    print("⏳ 正在等待 Cloudflare 完成鉴权生成 Token...")
-    for i in range(15):
-        time.sleep(1)
-        token = sb.execute_script(check_token_js)
-        if token and len(token) > 20:
-            print(f"🎉 物理击穿成功！耗时 {i+1} 秒成功捕获 Token！")
-            return True
-            
+            try:
+                # 拟人化轨迹与延时
+                sb.driver.execute_cdp_cmd('Input.dispatchMouseEvent', {
+                    'type': 'mouseMoved', 'x': click_x, 'y': click_y
+                })
+                time.sleep(0.2)
+                sb.driver.execute_cdp_cmd('Input.dispatchMouseEvent', {
+                    'type': 'mousePressed', 'x': click_x, 'y': click_y, 'button': 'left', 'clickCount': 1
+                })
+                time.sleep(0.12)
+                sb.driver.execute_cdp_cmd('Input.dispatchMouseEvent', {
+                    'type': 'mouseReleased', 'x': click_x, 'y': click_y, 'button': 'left', 'clickCount': 1
+                })
+                print("💥 拟人化 CDP 物理点击事件已注入！")
+            except Exception as e:
+                print(f"⚠️ CDP 注入异常，尝试盲点: {e}")
+                sb.uc_gui_click_captcha()
+        else:
+            print("⚠️ JS 节点锁定超时，使用 UC 盲点方案...")
+            try:
+                sb.uc_gui_click_captcha()
+            except Exception as e:
+                print(f"盲点方案执行提示: {e}")
+
+        print("⏳ 正在等待 Cloudflare 响应生成 Token...")
+        for i in range(12):
+            time.sleep(1)
+            token = sb.execute_script(check_token_js)
+            if token and len(token) > 20:
+                print(f"🎉 验证成功！耗时 {i+1} 秒捕获 Token！")
+                return True
+
+        print(f"⚠️ 第 {attempt} 次尝试未成功完成验证，暂停 3 秒后重试...")
+        time.sleep(3)
+
     return False
 
 
@@ -193,7 +234,7 @@ def main():
 
             print(f"✅ 成功进入应用页面: {sb.get_current_url()}")
 
-            # 2.1 自动清理未读消息/系统公告弹窗 (如 "You have an unread message")
+            # 2.1 自动清理未读消息/系统公告弹窗
             close_btns = [
                 "button:contains('Confirm')",
                 "button:contains('Close')",
@@ -240,7 +281,7 @@ def main():
             sb.sleep(5)
             save_shot(sb, "renew_confirmation_opened.png")
 
-            # 4. 执行 CDP 物理点击击穿
+            # 4. 执行 CDP 物理点击击穿（含 Shadow DOM 与拟人时延）
             success = force_cdp_click_cf(sb)
             if not success:
                 save_shot(sb, "renew_captcha_failed.png")

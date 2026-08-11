@@ -74,7 +74,7 @@ def save_shot(sb, name):
 
 
 def force_cdp_click_cf(sb):
-    """CDP 物理坐标精准击穿（强化版：支持动态加载等待、大小写不敏感匹配与 CDP 原生击穿）"""
+    """CDP 物理坐标精准击穿（优化版：全 DOM 树 + Shadow DOM 深度递归）"""
     check_token_js = """
     (() => {
         let el = document.querySelector('[name=cf-turnstile-response], [name=g-recaptcha-response]');
@@ -89,41 +89,64 @@ def force_cdp_click_cf(sb):
     print("🎯 启动 CDP 物理坐标定位...")
     get_rect_js = """
     (() => {
-        function findIframes(root) {
-            let results = [];
-            if (!root) return results;
-            let iframes = root.querySelectorAll('iframe');
-            for (let f of iframes) {
-                results.push(f);
-            }
-            let all = root.querySelectorAll('*');
-            for (let el of all) {
+        function getAllElements(root) {
+            let els = Array.from(root.querySelectorAll('*'));
+            let shadowEls = [];
+            for (let el of els) {
                 if (el.shadowRoot) {
-                    results = results.concat(findIframes(el.shadowRoot));
+                    shadowEls.push(...getAllElements(el.shadowRoot));
                 }
             }
-            return results;
+            return els.concat(shadowEls);
         }
 
-        let iframes = findIframes(document);
-        for (let f of iframes) {
-            let src = (f.src || '').toLowerCase();
-            let title = (f.title || '').toLowerCase();
-            let r = f.getBoundingClientRect();
-            if (r.width > 20 && r.height > 20) {
-                if (src.includes('challenge') || src.includes('cloudflare') || src.includes('turnstile') ||
-                    title.includes('challenge') || title.includes('cloudflare') || title.includes('turnstile') ||
-                    iframes.length === 1) {
+        let all = getAllElements(document);
+
+        // 策略 1: 寻找 Cloudflare / Turnstile 相关的 iframe
+        for (let el of all) {
+            if (el.tagName === 'IFRAME') {
+                let src = (el.src || '').toLowerCase();
+                let title = (el.title || '').toLowerCase();
+                let r = el.getBoundingClientRect();
+                if (r.width > 30 && r.height > 20 && r.top > 0) {
+                    if (src.includes('cloudflare') || src.includes('challenge') || src.includes('turnstile') ||
+                        title.includes('cloudflare') || title.includes('challenge') || title.includes('widget') ||
+                        title.includes('human') || title.includes('verify')) {
+                        return {left: r.left, top: r.top, width: r.width, height: r.height};
+                    }
+                }
+            }
+        }
+
+        // 策略 2: 匹配包含 Verify you are human 文本的容器节点
+        for (let el of all) {
+            if (el.innerText && el.innerText.includes('Verify you are human')) {
+                let r = el.getBoundingClientRect();
+                if (r.width > 50 && r.height > 20 && r.top > 0) {
                     return {left: r.left, top: r.top, width: r.width, height: r.height};
                 }
             }
         }
 
-        let containers = document.querySelectorAll('.cf-turnstile, #cf-turnstile, [data-sitekey], div[class*="turnstile" i]');
-        for (let c of containers) {
-            let r = c.getBoundingClientRect();
-            if (r.width > 20 && r.height > 20) {
-                return {left: r.left, top: r.top, width: r.width, height: r.height};
+        // 策略 3: 匹配弹窗中的任何可见 iframe
+        for (let el of all) {
+            if (el.tagName === 'IFRAME') {
+                let r = el.getBoundingClientRect();
+                if (r.width > 100 && r.height > 30 && r.top > 0) {
+                    return {left: r.left, top: r.top, width: r.width, height: r.height};
+                }
+            }
+        }
+
+        // 策略 4: Turnstile 容器 class/id
+        for (let el of all) {
+            let cls = (el.className || '').toString().toLowerCase();
+            let id = (el.id || '').toLowerCase();
+            if (cls.includes('turnstile') || id.includes('turnstile') || el.hasAttribute('data-sitekey')) {
+                let r = el.getBoundingClientRect();
+                if (r.width > 50 && r.height > 20 && r.top > 0) {
+                    return {left: r.left, top: r.top, width: r.width, height: r.height};
+                }
             }
         }
 
@@ -134,9 +157,8 @@ def force_cdp_click_cf(sb):
     for attempt in range(1, 5):
         print(f"🔄 正在进行第 {attempt} 次 Cloudflare 验证击穿尝试...")
         
-        # 轮询等待 iframe 完全加载渲染（最多 12 秒）
         rect = None
-        for _ in range(12):
+        for _ in range(10):
             rect = sb.execute_script(get_rect_js)
             if rect:
                 break
@@ -163,11 +185,14 @@ def force_cdp_click_cf(sb):
             except Exception as e:
                 print(f"⚠️ CDP 注入异常: {e}")
         else:
-            print("⚠️ JS 节点锁定超时，使用 SB 原生 CDP 点击方案...")
+            print("⚠️ JS 节点锁定超时，尝试 UC 盲点击方案...")
             try:
-                sb.uc_click_captcha()
+                if hasattr(sb, "uc_gui_click_captcha"):
+                    sb.uc_gui_click_captcha()
+                else:
+                    sb.uc_click("iframe[src*='challenge']")
             except Exception as e:
-                print(f"原生击穿提示: {e}")
+                print(f"盲击穿方案提示: {e}")
 
         print("⏳ 正在等待 Cloudflare 响应生成 Token...")
         for i in range(15):
@@ -257,7 +282,7 @@ def main():
                 except Exception:
                     pass
 
-            # 2.2 仅当应用真正为 Stopped 状态时，精确匹配并点击独占的 Start 按钮
+            # 2.2 仅当应用真正为 Stopped 状态时，精准匹配并点击独占的 Start 按钮
             page_src = sb.get_page_source()
             if "Application is stopped" in page_src:
                 print("▶️ 判定应用确实处于 Stopped 状态，准备启动...")

@@ -74,10 +74,10 @@ def save_shot(sb, name):
 
 
 def force_cdp_click_cf(sb):
-    """CDP 物理坐标精准击穿（带 Shadow DOM 递归穿透与拟人时延）"""
+    """CDP 物理坐标精准击穿（强化版：支持动态加载等待、大小写不敏感匹配与 CDP 原生击穿）"""
     check_token_js = """
     (() => {
-        let el = document.querySelector('[name=cf-turnstile-response]');
+        let el = document.querySelector('[name=cf-turnstile-response], [name=g-recaptcha-response]');
         return el ? el.value : '';
     })()
     """
@@ -89,54 +89,61 @@ def force_cdp_click_cf(sb):
     print("🎯 启动 CDP 物理坐标定位...")
     get_rect_js = """
     (() => {
-        function findTarget(root) {
-            if (!root) return null;
-            let iframe = root.querySelector("iframe[src*='challenges'], iframe[title*='Cloudflare'], iframe[src*='cloudflare']");
-            if (iframe) return iframe;
-
-            let ts = root.querySelector(".cf-turnstile, #cf-turnstile, [data-sitekey]");
-            if (ts) return ts;
-
+        function findIframes(root) {
+            let results = [];
+            if (!root) return results;
+            let iframes = root.querySelectorAll('iframe');
+            for (let f of iframes) {
+                results.push(f);
+            }
             let all = root.querySelectorAll('*');
             for (let el of all) {
                 if (el.shadowRoot) {
-                    let res = findTarget(el.shadowRoot);
-                    if (res) return res;
+                    results = results.concat(findIframes(el.shadowRoot));
                 }
             }
-            return null;
+            return results;
         }
 
-        let el = findTarget(document);
-
-        if (!el) {
-            let iframes = document.querySelectorAll("iframe");
-            for (let f of iframes) {
-                let r = f.getBoundingClientRect();
-                if (r.width > 100 && r.height > 30) {
-                    el = f;
-                    break;
+        let iframes = findIframes(document);
+        for (let f of iframes) {
+            let src = (f.src || '').toLowerCase();
+            let title = (f.title || '').toLowerCase();
+            let r = f.getBoundingClientRect();
+            if (r.width > 20 && r.height > 20) {
+                if (src.includes('challenge') || src.includes('cloudflare') || src.includes('turnstile') ||
+                    title.includes('challenge') || title.includes('cloudflare') || title.includes('turnstile') ||
+                    iframes.length === 1) {
+                    return {left: r.left, top: r.top, width: r.width, height: r.height};
                 }
             }
         }
 
-        if (!el) {
-            let elems = Array.from(document.querySelectorAll('div, span, section'));
-            el = elems.find(e => e.innerText && e.innerText.includes('Verify you are human'));
+        let containers = document.querySelectorAll('.cf-turnstile, #cf-turnstile, [data-sitekey], div[class*="turnstile" i]');
+        for (let c of containers) {
+            let r = c.getBoundingClientRect();
+            if (r.width > 20 && r.height > 20) {
+                return {left: r.left, top: r.top, width: r.width, height: r.height};
+            }
         }
 
-        if (!el) return null;
-        let r = el.getBoundingClientRect();
-        return {left: r.left, top: r.top, width: r.width, height: r.height};
+        return null;
     })()
     """
 
-    for attempt in range(1, 4):
+    for attempt in range(1, 5):
         print(f"🔄 正在进行第 {attempt} 次 Cloudflare 验证击穿尝试...")
-        rect = sb.execute_script(get_rect_js)
+        
+        # 轮询等待 iframe 完全加载渲染（最多 12 秒）
+        rect = None
+        for _ in range(12):
+            rect = sb.execute_script(get_rect_js)
+            if rect:
+                break
+            time.sleep(1)
 
         if rect and rect['width'] > 0 and rect['height'] > 0:
-            click_x = int(rect['left'] + min(35, rect['width'] * 0.15))
+            click_x = int(rect['left'] + min(30, rect['width'] * 0.15))
             click_y = int(rect['top'] + (rect['height'] / 2))
             print(f"📍 精准锁定复选框坐标: X={click_x}, Y={click_y}")
 
@@ -148,23 +155,22 @@ def force_cdp_click_cf(sb):
                 sb.driver.execute_cdp_cmd('Input.dispatchMouseEvent', {
                     'type': 'mousePressed', 'x': click_x, 'y': click_y, 'button': 'left', 'clickCount': 1
                 })
-                time.sleep(0.12)
+                time.sleep(0.15)
                 sb.driver.execute_cdp_cmd('Input.dispatchMouseEvent', {
                     'type': 'mouseReleased', 'x': click_x, 'y': click_y, 'button': 'left', 'clickCount': 1
                 })
                 print("💥 拟人化 CDP 物理点击事件已注入！")
             except Exception as e:
-                print(f"⚠️ CDP 注入异常，尝试盲点: {e}")
-                sb.uc_gui_click_captcha()
+                print(f"⚠️ CDP 注入异常: {e}")
         else:
-            print("⚠️ JS 节点锁定超时，使用 UC 盲点方案...")
+            print("⚠️ JS 节点锁定超时，使用 SB 原生 CDP 点击方案...")
             try:
-                sb.uc_gui_click_captcha()
+                sb.uc_click_captcha()
             except Exception as e:
-                print(f"盲点方案执行提示: {e}")
+                print(f"原生击穿提示: {e}")
 
         print("⏳ 正在等待 Cloudflare 响应生成 Token...")
-        for i in range(12):
+        for i in range(15):
             time.sleep(1)
             token = sb.execute_script(check_token_js)
             if token and len(token) > 20:
@@ -255,7 +261,6 @@ def main():
             page_src = sb.get_page_source()
             if "Application is stopped" in page_src:
                 print("▶️ 判定应用确实处于 Stopped 状态，准备启动...")
-                # 使用严格精准匹配 XPath，防止误触 "Restart"
                 exact_start_xpath = "//button[translate(normalize-space(text()), 'START', 'start')='start']"
                 try:
                     if sb.is_element_visible(exact_start_xpath):
@@ -284,7 +289,7 @@ def main():
             sb.scroll_to(reset)
             sb.click(reset)
             print("✅ 已打开续期弹窗，等待动画与 Cloudflare 渲染...")
-            sb.sleep(5)
+            sb.sleep(6)
             save_shot(sb, "renew_confirmation_opened.png")
 
             # 4. 执行 CDP 物理点击击穿

@@ -49,7 +49,7 @@ jobs:
       - name: 启动 SOCKS5 转发（兼容带认证的代理节点）
         if: env.JUSTRUNMY_PROXY != ''
         run: |
-          curl -sL -o /tmp/gost.tar.gz https://github.com/go-gost/gost/releases/download/v2.12.0/gost_2.12.0_linux_amd64.tar.gz
+          curl -sL -o /tmp/gost.tar.gz https://github.com/go-gost/gost/releases/download/v3.3.0/gost_3.3.0_linux_amd64.tar.gz
           tar -xzf /tmp/gost.tar.gz -C /tmp
           chmod +x /tmp/gost
           nohup /tmp/gost -L "socks5://127.0.0.1:51080" -F "$JUSTRUNMY_PROXY" > gost.log 2>&1 &

@@ -15,6 +15,7 @@ jobs:
     timeout-minutes: 30
     env:
       JUSTRUNMY_COOKIE: ${{ secrets.JUSTRUNMY_COOKIE }}
+      JUSTRUNMY_PROXY: ${{ secrets.JUSTRUNMY_PROXY }}
       JUSTRUNMY_APP_URL: ${{ secrets.JUSTRUNMY_APP_URL }}
       TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
       TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}

@@ -13,6 +13,7 @@ APP_URL = os.getenv("JUSTRUNMY_APP_URL", "").strip() or "https://justrunmy.app/p
 SCREENSHOT_DIR = Path(os.getenv("SCREENSHOT_DIR", "screenshots"))
 SCREENSHOT_DIR.mkdir(parents=True, exist_ok=True)
 RAW_COOKIE = os.getenv("JUSTRUNMY_COOKIE", "").strip()
+RAW_PROXY = os.getenv("JUSTRUNMY_PROXY", "").strip()
 ssh_process = None
 
 
@@ -225,7 +226,11 @@ def main():
     if not RAW_COOKIE:
         raise RuntimeError("缺少 JUSTRUNMY_COOKIE 环境变量，无法注入 Cookie 登录！")
 
-    proxy = start_proxy()
+    if RAW_PROXY:
+        proxy = RAW_PROXY
+        print(f"✅ 使用外部 SOCKS5 代理: {proxy}")
+    else:
+        proxy = start_proxy()
     kwargs = dict(uc=True, headless=False, locale="en-US")
     if proxy:
         kwargs["proxy"] = proxy

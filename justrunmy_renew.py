@@ -9,7 +9,7 @@ from pathlib import Path
 import requests
 from seleniumbase import SB
 
-APP_URL = os.getenv("JUSTRUNMY_APP_URL", "").strip() or "https://justrunmy.app/panel/application/39529/"
+APP_URL = os.getenv("JUSTRUNMY_APP_URL", "").strip() or "https://justrunmy.app/panel/application/57562/"
 SCREENSHOT_DIR = Path(os.getenv("SCREENSHOT_DIR", "screenshots"))
 SCREENSHOT_DIR.mkdir(parents=True, exist_ok=True)
 RAW_COOKIE = os.getenv("JUSTRUNMY_COOKIE", "").strip()

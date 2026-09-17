@@ -228,7 +228,7 @@ def main():
 
     if RAW_PROXY:
         proxy = RAW_PROXY
-        print(f"✅ 使用外部 SOCKS5 代理: {proxy}")
+        print(f"✅ 使用外部代理: {proxy}")
     else:
         proxy = start_proxy()
     kwargs = dict(uc=True, headless=False, locale="en-US")
